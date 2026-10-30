@@ -1,0 +1,1370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aave Savings: architecture walkthrough</title>
+<style>
+  :root {
+          --page-top: #141520;
+          --page: #0b0c12;
+          --panel: rgba(255,255,255,0.045);
+          --panel-2: rgba(255,255,255,0.07);
+          --rim: rgba(255,255,255,0.10);
+          --text: #eceef6;
+          --muted: #9a9eb5;
+          --faint: #6d7190;
+          --lavender: #b6a8ff;
+          --blue: #7fb0ff;
+          --teal: #6fe0c8;
+          --amber: #ffc978;
+          --pink: #ff9ad5;
+          --mono: ui-monospace, "SF Mono", Menlo, monospace;
+        }
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+          margin: 0;
+          color: var(--text);
+          font: 15.5px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+          background:
+            radial-gradient(1200px 600px at 70% -10%, rgba(130,110,255,0.20), transparent 60%),
+            radial-gradient(900px 500px at -10% 20%, rgba(80,160,255,0.12), transparent 60%),
+            linear-gradient(180deg, var(--page-top), var(--page) 700px);
+          background-attachment: fixed;
+          -webkit-font-smoothing: antialiased;
+        }
+        .wrap { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 48px; max-width: 1240px; margin: 0 auto; padding: 0 32px; }
+        nav {
+          position: sticky; top: 0; align-self: start; height: 100vh; overflow: auto;
+          padding: 40px 0; font-size: 13.5px;
+        }
+        nav .brand { font-weight: 700; letter-spacing: -0.01em; font-size: 15px; margin-bottom: 18px; display: flex; gap: 10px; align-items: center; }
+        nav .brand i { width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff8, transparent 45%), linear-gradient(135deg, #9b8cff, #5aa2ff); display: inline-block; box-shadow: 0 0 0 1px #fff2 inset; }
+        nav a { display: block; color: var(--muted); text-decoration: none; padding: 5px 10px; border-radius: 8px; border-left: 2px solid transparent; }
+        nav a:hover { color: var(--text); background: var(--panel); }
+        nav a.active { color: var(--text); border-left-color: var(--lavender); background: var(--panel); }
+        nav .num { color: var(--faint); font-variant-numeric: tabular-nums; margin-right: 6px; }
+        main { padding: 56px 0 120px; min-width: 0; }
+        header.hero { margin-bottom: 56px; }
+        .kicker { color: var(--lavender); font-size: 12.5px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; }
+        h1 { font-size: 46px; line-height: 1.05; letter-spacing: -0.035em; margin: 10px 0 16px; font-weight: 700;
+             background: linear-gradient(90deg, #fff, #cfc6ff 60%, #9fc4ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .lede { font-size: 18px; color: #c9cce0; max-width: 760px; }
+        section { padding-top: 28px; margin-top: 44px; border-top: 1px solid var(--rim); scroll-margin-top: 12px; }
+        h2 { font-size: 28px; letter-spacing: -0.02em; margin: 0 0 6px; }
+        h2 .n { color: var(--faint); font-weight: 500; margin-right: 10px; font-variant-numeric: tabular-nums; }
+        h3 { font-size: 17px; margin: 30px 0 8px; letter-spacing: -0.01em; }
+        p { margin: 10px 0; max-width: 820px; }
+        .sub { color: var(--muted); margin-top: 0; }
+        code { font-family: var(--mono); font-size: 0.86em; background: rgba(255,255,255,0.07); padding: 1.5px 6px; border-radius: 6px; color: #e3e0ff; }
+        a.file { font-family: var(--mono); font-size: 0.86em; color: var(--blue); text-decoration: none; }
+        a.file:hover { text-decoration: underline; }
+        pre { font-family: var(--mono); font-size: 12.8px; line-height: 1.55; background: rgba(5,6,12,0.65); border: 1px solid var(--rim); border-radius: 14px; padding: 16px 18px; overflow: auto; color: #d7d9ea; }
+        pre .c { color: #6f7493; } pre .k { color: var(--lavender); } pre .s { color: var(--teal); }
+
+        .glass {
+          background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+          border: 1px solid var(--rim); border-radius: 18px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 20px 40px -24px rgba(0,0,0,0.6);
+          backdrop-filter: blur(8px);
+        }
+        .grid { display: grid; gap: 14px; }
+        .g2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+        .g3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+        .g4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+        .card { padding: 16px 18px; }
+        .card h4 { margin: 0 0 6px; font-size: 14.5px; display: flex; gap: 8px; align-items: center; }
+        .card p { font-size: 14px; color: #c4c7da; margin: 6px 0 0; }
+        .card .path { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+        .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+        .tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; opacity: 0.9; }
+        .t-js { color: var(--amber); } .t-ui { color: var(--teal); } .t-nat { color: var(--pink); } .t-skia { color: var(--blue); }
+
+        .callout { padding: 14px 18px; border-left: 3px solid var(--lavender); background: rgba(182,168,255,0.07); border-radius: 0 12px 12px 0; margin: 18px 0; max-width: 860px; }
+        .callout b { color: #fff; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13.8px; margin: 12px 0; }
+        th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rim); vertical-align: top; }
+        th { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; }
+        td:first-child { white-space: nowrap; }
+        table.patches td:first-child { white-space: normal; width: 190px; font-family: var(--mono); font-size: 12px; color: #e3e0ff; }
+        table.patches td:nth-child(2) { white-space: nowrap; color: var(--muted); }
+        table.patches ul { margin: 6px 0 0; padding-left: 18px; } table.patches li { margin: 4px 0; }
+        .tablewrap { overflow: hidden; padding: 4px 6px; }
+
+        svg text { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+        .diagram { padding: 18px; margin: 18px 0; overflow-x: auto; }
+        .diagram svg { display: block; width: 100%; height: auto; min-width: 640px; }
+
+        /* phone map */
+        .phone-row { display: grid; grid-template-columns: 300px minmax(0,1fr); gap: 28px; align-items: start; }
+        .phone { position: relative; width: 300px; height: 600px; border-radius: 44px; padding: 14px; background: linear-gradient(180deg, #1d1f2e, #0b0c12); border: 1px solid #ffffff22; box-shadow: 0 30px 60px -30px #000, inset 0 0 0 6px #05060a; }
+        .screen { position: relative; height: 100%; border-radius: 32px; overflow: hidden; background: linear-gradient(180deg, #1b1d33 0%, #10111a 55%, #0b0c12 100%); }
+        .zone { position: absolute; left: 12px; right: 12px; border-radius: 10px; border: 1px dashed rgba(255,255,255,0.28); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #d8dbf0; cursor: pointer; transition: background .15s, border-color .15s; text-align: center; }
+        .zone:hover, .zone.on { background: rgba(182,168,255,0.16); border-color: var(--lavender); border-style: solid; }
+        .zone .b { font-family: var(--mono); font-size: 10.5px; }
+        .zone-info { min-height: 160px; padding: 18px 20px; }
+        .zone-info h4 { margin: 0 0 6px; font-size: 16px; }
+        .zone-info p { color: #c4c7da; font-size: 14px; }
+
+        /* tabs for glass pipelines */
+        .tabs { display: flex; gap: 6px; margin: 16px 0 0; }
+        .tabs button { font: inherit; font-size: 13px; color: var(--muted); background: var(--panel); border: 1px solid var(--rim); padding: 6px 14px; border-radius: 999px; cursor: pointer; }
+        .tabs button.on { color: #fff; background: rgba(182,168,255,0.18); border-color: var(--lavender); }
+        .tabpane { display: none; } .tabpane.on { display: block; }
+
+        .steps { counter-reset: s; list-style: none; padding: 0; margin: 12px 0; max-width: 860px; }
+        .steps li { position: relative; padding: 8px 0 8px 40px; }
+        .steps li::before { counter-increment: s; content: counter(s); position: absolute; left: 0; top: 8px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: rgba(182,168,255,0.16); color: var(--lavender); border: 1px solid rgba(182,168,255,0.4); }
+
+        .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+        .legend span { display: inline-flex; gap: 6px; align-items: center; }
+        footer { margin-top: 80px; color: var(--faint); font-size: 13px; }
+
+        /* component reference */
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 6px; }
+        .chips a { font-size: 12.5px; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--rim); background: var(--panel); }
+        .chips a:hover { color: #fff; border-color: var(--lavender); }
+        .chips .grp { font-size: 11px; color: var(--faint); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; padding: 5px 4px 0 10px; }
+        .comp-group { margin-top: 40px; }
+        .comp-group > h3 { font-size: 20px; margin-bottom: 4px; }
+        .comp-group > p.sub { margin-bottom: 4px; }
+        .comp { padding: 18px 22px 14px; margin: 14px 0; scroll-margin-top: 12px; }
+        .comp > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+        .comp > header h4 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+        .comp > header .path { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+        .comp > header .tags { display: flex; gap: 6px; margin-left: auto; }
+        .comp p, .comp li { font-size: 14.2px; color: #c9cce0; }
+        .comp p { max-width: none; }
+        .comp h5 { margin: 14px 0 2px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+        .comp ol.steps { max-width: none; margin: 4px 0; }
+        .comp ol.steps li { padding: 5px 0 5px 36px; }
+        .comp ol.steps li::before { top: 5px; width: 22px; height: 22px; font-size: 11px; }
+        .comp ul { margin: 4px 0; padding-left: 20px; }
+        .comp ul li { margin: 3px 0; }
+        .comp table { font-size: 13px; margin: 6px 0; }
+        .comp td, .comp th { padding: 6px 10px; }
+        .comp td:first-child { font-family: var(--mono); font-size: 12px; color: #e3e0ff; }
+        .comp pre { font-size: 12.2px; margin: 8px 0; }
+
+        @media (max-width: 960px) {
+          .wrap { grid-template-columns: 1fr; } nav { display: none; }
+          .g3, .g4 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+          .phone-row { grid-template-columns: 1fr; }
+        }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav id="toc">
+  <div class="brand"><i></i>Aave Savings</div>
+  <a href="#big-picture"><span class="num">01</span>Big picture</a>
+  <a href="#threads"><span class="num">02</span>Three threads</a>
+  <a href="#boot"><span class="num">03</span>Boot sequence</a>
+  <a href="#screen"><span class="num">04</span>The screen</a>
+  <a href="#data"><span class="num">05</span>Data &amp; maths</a>
+  <a href="#hero"><span class="num">06</span>Hero amount</a>
+  <a href="#chart"><span class="num">07</span>The chart</a>
+  <a href="#glass"><span class="num">08</span>Glass</a>
+  <a href="#trays"><span class="num">09</span>Trays &amp; input</a>
+  <a href="#theme"><span class="num">10</span>Theme switch</a>
+  <a href="#text"><span class="num">11</span>Text, icons, haptics</a>
+  <a href="#components"><span class="num">12</span>Component reference</a>
+  <a href="#native"><span class="num">13</span>Native layer</a>
+  <a href="#tests"><span class="num">14</span>Tests &amp; tooling</a>
+  <a href="#index"><span class="num">15</span>File index</a>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="kicker">Architecture walkthrough</div>
+  <h1>How the savings simulator is put together</h1>
+  <p class="lede">A one-screen Expo app that projects what a savings plan grows to at Aave's stablecoin rate. Nearly every pixel that moves is driven on the UI thread, and React's job is mostly to lay things out once. This page goes through it from the top down: the threads, boot, the screen, then each subsystem.</p>
+</header>
+
+<!-- 01 -->
+<section id="big-picture">
+  <h2><span class="n">01</span>Big picture</h2>
+  <p class="sub">Roughly 12k lines in <code>src/</code>, one screen, three trays, and a native glass view written for both platforms.</p>
+
+  <div class="diagram glass">
+  <svg viewBox="0 0 960 430" role="img" aria-label="Layer diagram of the app">
+    <defs>
+      <linearGradient id="lg1" x1="0" x2="1"><stop offset="0" stop-color="#b6a8ff" stop-opacity=".28"/><stop offset="1" stop-color="#7fb0ff" stop-opacity=".18"/></linearGradient>
+      <linearGradient id="lg2" x1="0" x2="1"><stop offset="0" stop-color="#6fe0c8" stop-opacity=".22"/><stop offset="1" stop-color="#7fb0ff" stop-opacity=".14"/></linearGradient>
+      <linearGradient id="lg3" x1="0" x2="1"><stop offset="0" stop-color="#ff9ad5" stop-opacity=".20"/><stop offset="1" stop-color="#ffc978" stop-opacity=".12"/></linearGradient>
+    </defs>
+    <!-- row labels -->
+    <g fill="#9a9eb5" font-size="12" font-weight="600" letter-spacing="1">
+      <text x="10" y="44">SCREEN</text><text x="10" y="150">SUBSYSTEMS</text><text x="10" y="262">FOUNDATIONS</text><text x="10" y="372">NATIVE</text>
+    </g>
+    <!-- screen -->
+    <rect x="120" y="18" width="830" height="52" rx="12" fill="url(#lg1)" stroke="#ffffff30"/>
+    <text x="535" y="40" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">SavingsScreen</text>
+    <text x="535" y="59" text-anchor="middle" fill="#c9cce0" font-size="12">owns plan · range · rate choice · selectedIndex (shared value)</text>
+    <!-- subsystems -->
+    <g font-size="13" fill="#fff" font-weight="600" text-anchor="middle">
+      <rect x="120" y="100" width="150" height="90" rx="12" fill="url(#lg2)" stroke="#ffffff26"/><text x="195" y="135">HeroAmount</text><text x="195" y="155" font-size="11" fill="#c9cce0" font-weight="400">rolling slots</text><text x="195" y="171" font-size="11" fill="#c9cce0" font-weight="400">+ EarnedLine</text>
+      <rect x="285" y="100" width="150" height="90" rx="12" fill="url(#lg2)" stroke="#ffffff26"/><text x="360" y="135">BarChart</text><text x="360" y="155" font-size="11" fill="#c9cce0" font-weight="400">Skia canvas, layers</text><text x="360" y="171" font-size="11" fill="#c9cce0" font-weight="400">zoom + scrub</text>
+      <rect x="450" y="100" width="150" height="90" rx="12" fill="url(#lg2)" stroke="#ffffff26"/><text x="525" y="135">Glass</text><text x="525" y="155" font-size="11" fill="#c9cce0" font-weight="400">GlassView + touch</text><text x="525" y="171" font-size="11" fill="#c9cce0" font-weight="400">menu · buttons · card</text>
+      <rect x="615" y="100" width="150" height="90" rx="12" fill="url(#lg2)" stroke="#ffffff26"/><text x="690" y="135">Trays</text><text x="690" y="155" font-size="11" fill="#c9cce0" font-weight="400">TrueSheet</text><text x="690" y="171" font-size="11" fill="#c9cce0" font-weight="400">add money · rate · about</text>
+      <rect x="780" y="100" width="170" height="90" rx="12" fill="url(#lg2)" stroke="#ffffff26"/><text x="865" y="135">Amount input</text><text x="865" y="155" font-size="11" fill="#c9cce0" font-weight="400">AmountDisplay · Numpad</text><text x="865" y="171" font-size="11" fill="#c9cce0" font-weight="400">layout transitions</text>
+    </g>
+    <!-- foundations -->
+    <g font-size="12.5" fill="#fff" font-weight="600" text-anchor="middle">
+      <rect x="120" y="222" width="125" height="66" rx="12" fill="#ffffff0d" stroke="#ffffff22"/><text x="182" y="250">projection</text><text x="182" y="269" font-size="11" fill="#9a9eb5" font-weight="400">plan maths</text>
+      <rect x="255" y="222" width="125" height="66" rx="12" fill="#ffffff0d" stroke="#ffffff22"/><text x="317" y="250">rate</text><text x="317" y="269" font-size="11" fill="#9a9eb5" font-weight="400">Aave GraphQL</text>
+      <rect x="390" y="222" width="125" height="66" rx="12" fill="#ffffff0d" stroke="#ffffff22"/><text x="452" y="250">theme</text><text x="452" y="269" font-size="11" fill="#9a9eb5" font-weight="400">two modes, no render</text>
+      <rect x="525" y="222" width="125" height="66" rx="12" fill="#ffffff0d" stroke="#ffffff22"/><text x="587" y="250">format + i18n</text><text x="587" y="269" font-size="11" fill="#9a9eb5" font-weight="400">en · pt · es</text>
+      <rect x="660" y="222" width="140" height="66" rx="12" fill="#ffffff0d" stroke="#ffffff22"/><text x="730" y="250">skia fonts</text><text x="730" y="269" font-size="11" fill="#9a9eb5" font-weight="400">Regola paragraphs</text>
+      <rect x="810" y="222" width="140" height="66" rx="12" fill="#ffffff0d" stroke="#ffffff22"/><text x="880" y="250">ui kit</text><text x="880" y="269" font-size="11" fill="#9a9eb5" font-weight="400">Text · Icon · Tabs</text>
+    </g>
+    <!-- native -->
+    <rect x="120" y="322" width="410" height="88" rx="12" fill="url(#lg3)" stroke="#ffffff26"/>
+    <text x="325" y="352" text-anchor="middle" fill="#fff" font-size="13.5" font-weight="700">Inline Expo modules (in src/)</text>
+    <text x="325" y="373" text-anchor="middle" fill="#e9d8ea" font-size="11.5">AaveGlass (Swift + Kotlin) · SystemNightMode · DamageBoundary (Kotlin)</text>
+    <text x="325" y="391" text-anchor="middle" fill="#e9d8ea" font-size="11.5">picked up through the app's watched-directories setting</text>
+    <rect x="545" y="322" width="405" height="88" rx="12" fill="url(#lg3)" stroke="#ffffff26"/>
+    <text x="747" y="352" text-anchor="middle" fill="#fff" font-size="13.5" font-weight="700">plugins/ + patches/</text>
+    <text x="747" y="373" text-anchor="middle" fill="#e9d8ea" font-size="11.5">9 config plugins (startup, night mode, window)</text>
+    <text x="747" y="391" text-anchor="middle" fill="#e9d8ea" font-size="11.5">13 dependency patches · RN built from source</text>
+    <!-- connectors -->
+    <g stroke="#ffffff30" stroke-width="1.2">
+      <line x1="535" y1="70" x2="535" y2="100"/><line x1="535" y1="190" x2="535" y2="222"/><line x1="535" y1="288" x2="535" y2="322"/>
+    </g>
+  </svg>
+  </div>
+
+  <h3>The stack</h3>
+  <div class="grid g4">
+    <div class="glass card"><h4>Expo 58 · RN 0.88</h4><p>Built from source with Hermes V1, because the RN patch has native hunks. Uses prebuild with config plugins.</p></div>
+    <div class="glass card"><h4>Reanimated 4 + Worklets</h4><p>Shared values and worklets drive almost every animation, so motion never waits on the JS thread.</p></div>
+    <div class="glass card"><h4>Skia 3.8</h4><p>Draws the chart, the tooltip, the axis and the "?"/Reset morph. Labels are shaped Regola paragraphs.</p></div>
+    <div class="glass card"><h4>Gesture Handler 3</h4><p>The v3 hook API (<code>usePanGesture</code>, <code>useManualGesture</code>) for scrubbing, the glass and the menu.</p></div>
+    <div class="glass card"><h4>TrueSheet</h4><p>Native bottom sheets for the three trays. Heavily patched.</p></div>
+    <div class="glass card"><h4>PlainText</h4><p>Draws single-run labels as native text instead of RN <code>&lt;Text&gt;</code>, which is cheaper.</p></div>
+    <div class="glass card"><h4>nano-icons</h4><p>Builds the SVGs in <code>src/ui/icons/svg-source</code> into an icon font.</p></div>
+    <div class="glass card"><h4>MMKV · nitro-haptics</h4><p>MMKV stores the theme, the last simulated plan, the rate choice and the saved rate. Haptics fire on the UI thread when called from a worklet.</p></div>
+  </div>
+</section>
+
+<!-- 02 -->
+<section id="threads">
+  <h2><span class="n">02</span>The three-thread rule</h2>
+  <p class="sub">The idea the rest of the codebase follows: <b>JS lays out, the UI thread blends, native draws.</b></p>
+
+  <div class="diagram glass">
+  <svg viewBox="0 0 960 300" role="img" aria-label="Thread diagram">
+    <g font-size="13" font-weight="700">
+      <rect x="20" y="20" width="280" height="260" rx="16" fill="#ffc97814" stroke="#ffc97860"/>
+      <text x="40" y="50" fill="#ffc978">JS thread (React)</text>
+      <rect x="340" y="20" width="280" height="260" rx="16" fill="#6fe0c814" stroke="#6fe0c860"/>
+      <text x="360" y="50" fill="#6fe0c8">UI thread (worklets)</text>
+      <rect x="660" y="20" width="280" height="260" rx="16" fill="#ff9ad514" stroke="#ff9ad560"/>
+      <text x="680" y="50" fill="#ff9ad5">Native (views, Skia, GPU)</text>
+    </g>
+    <g font-size="12.5" fill="#d7d9ea">
+      <text x="40" y="82">• projectSavings() once per plan / rate</text>
+      <text x="40" y="106">• layOutHero(): every slot's position</text>
+      <text x="40" y="130">• tooltip texts formatted per range</text>
+      <text x="40" y="154">• Skia paragraphs built once, in white</text>
+      <text x="40" y="178">• tray state, numpad keys</text>
+      <text x="40" y="214" fill="#9a9eb5">Renders are rare: a new plan,</text>
+      <text x="40" y="232" fill="#9a9eb5">a new range, a tray opening.</text>
+
+      <text x="360" y="82">• selectedIndex: the scrubbed bar</text>
+      <text x="360" y="106">• the zoom spring between ranges</text>
+      <text x="360" y="130">• hero digits rolling between layouts</text>
+      <text x="360" y="154">• themeModeValue flips (no render)</text>
+      <text x="360" y="178">• glass touch x / y / strength</text>
+      <text x="360" y="214" fill="#9a9eb5">Gestures write shared values;</text>
+      <text x="360" y="232" fill="#9a9eb5">derived values and animated props read them.</text>
+
+      <text x="680" y="82">• Skia redraws the canvas per frame</text>
+      <text x="680" y="106">• AaveGlassView: blur, bend, rim</text>
+      <text x="680" y="130">• touch light: one layer moved</text>
+      <text x="680" y="154">• TrueSheet resizes trays natively</text>
+      <text x="680" y="178">• haptics from the UI thread</text>
+      <text x="680" y="214" fill="#9a9eb5">Expensive work is cached; a frame</text>
+      <text x="680" y="232" fill="#9a9eb5">replays textures instead of redoing it.</text>
+    </g>
+    <g stroke="#ffffff55" stroke-width="1.5" fill="none" marker-end="url(#ah)">
+      <path d="M300 150 H340"/><path d="M620 150 H660"/>
+    </g>
+    <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffffff88"/></marker></defs>
+  </svg>
+  </div>
+
+  <div class="callout"><b>A gotcha that bit us:</b> a worklet that calls a plain JS function crashes the app with <code>Tried to synchronously call a Remote Function</code>. Anything a worklet calls must itself be a worklet (<code>"worklet";</code>), or be computed ahead of time on JS. The <code>EdgeFade</code> launch crash was a <code>.map</code> inside a <code>useDerivedValue</code>, so its stops are now precomputed constants.</div>
+</section>
+
+<!-- 03 -->
+<section id="boot">
+  <h2><span class="n">03</span>Boot sequence</h2>
+  <p class="sub">The splash stays up until the screen can draw its finished first frame.</p>
+  <ol class="steps">
+    <li><a class="file" href="../index.js">index.js</a>: with Worklets bundle mode the same bundle is also evaluated on the UI runtime, so the app registers itself only on the React Native runtime (<code>__RUNTIME_KIND === 1</code>).</li>
+    <li><a class="file" href="../src/App.tsx">App.tsx</a> module scope: <code>preventAutoHideAsync()</code>, <code>preloadTypefaces(SKIA_TYPEFACES)</code> and <code>prefetchAaveRate()</code>. The network request overlaps the first render.</li>
+    <li><code>App</code> waits for the Skia typefaces, capped at <b>1500 ms</b> so a stuck font load can't keep the splash up. The hero falls back to a system face.</li>
+    <li>Once ready it hides the splash and calls <code>HermesInternal.ttiReached()</code>. That ends Hermes's allocate-in-old-gen startup mode (<a class="file" href="../plugins/withHermesOldGenBeforeTti.ts">withHermesOldGenBeforeTti.ts</a>).</li>
+    <li>Tree: <code>QueryClientProvider → GestureHandlerRootView → SafeAreaProvider → ThemeProvider → SavingsScreen</code>. Once the screen shows, <code>warmUpGlassLens()</code> runs on an idle callback so the first glass menu doesn't pay to compile the lens shaders.</li>
+    <li>The Add Money tray mounts its content 1.5 s after launch, on an idle callback, so opening it later costs only the native present. The info trays mount their content when they open.</li>
+  </ol>
+  <p>On Android, several config plugins cut cold-start time: React starts loading from <code>Application.onCreate</code>, native libraries preload on idle cores (worklets alone take about 11 ms on the Redmi), EmojiCompat is removed (about 6 ms on the main thread), and a baseline profile AOT-compiles the cold-start path. The numbers live in <code>.claude/skills/performance/history.md</code>.</p>
+</section>
+
+<!-- 04 -->
+<section id="screen">
+  <h2><span class="n">04</span>The screen</h2>
+  <p class="sub">Hover or tap a region to see what renders it. <a class="file" href="../src/SavingsScreen.tsx">SavingsScreen.tsx</a> composes everything.</p>
+
+  <div class="phone-row">
+    <div class="phone"><div class="screen" id="phone">
+      <div class="zone" data-k="top"    style="top:34px;height:44px">HelpResetButton · ThemeToggle</div>
+      <div class="zone" data-k="rate"   style="top:88px;height:26px">Rate row</div>
+      <div class="zone" data-k="hero"   style="top:120px;height:70px">HeroAmount + EarnedLine</div>
+      <div class="zone" data-k="chart"  style="top:198px;height:200px">SavingsChart (Skia)</div>
+      <div class="zone" data-k="axis"   style="top:404px;height:24px">ChartAxis</div>
+      <div class="zone" data-k="pills"  style="top:436px;height:34px">SlidingTabs: 6M 1Y 10Y 30Y</div>
+      <div class="zone" data-k="card"   style="top:486px;height:56px">PlanCard (glass)</div>
+      <div class="zone" data-k="bg"     style="top:550px;height:22px;border-style:dotted">PageGradient (behind)</div>
+    </div></div>
+    <div class="glass zone-info" id="zoneInfo">
+      <h4>Pick a region</h4>
+      <p>Each region on the phone maps to a component. The state lives in <code>SavingsScreen</code>: <code>plan</code>, <code>simulation</code>, <code>rangeId</code>, <code>rateChoice</code>, and one shared value, <code>selectedIndex</code>. The hero, the axis and the chart all read <code>selectedIndex</code> on the UI thread.</p>
+    </div>
+  </div>
+
+  <h3>State and data flow</h3>
+<pre><span class="c">// SavingsScreen</span>
+plan, planOrigin, rangeId, rateChoice     <span class="c">← React state; plan + rateChoice restored from MMKV, planOrigin: default | restored | edited</span>
+selectedIndex = useSharedValue(-1)        <span class="c">← the scrubbed bar, UI thread</span>
+aaveRate = useAaveRate()                  <span class="c">← loading (isLate) | ready | unavailable</span>
+apy      = effectiveRate(aaveRate, rateChoice)
+projection = useMemo(projectSavings({...plan, apy}))   <span class="c">// stable identity: the chart retargets on change</span>
+
+<span class="k">ProjectionSummary</span>(projection, rangeId, selectedIndex)  → HeroAmount + EarnedLine
+<span class="k">SavingsChart</span>(projection, plan, rangeId, selectedIndex)   → BarChart + layers
+<span class="k">ChartAxis</span>(rangeId, selectedIndex)
+<span class="k">PlanCard</span>(plan, rangeMonths)                → openTray("add-money")
+<span class="k">AddMoneyTray</span> → onSimulate(plan) → setPlan + simulation = "fresh"; saved (Reset: DEFAULT_PLAN, saved plan cleared)
+<span class="k">InterestRateTray</span> → setRateChoice("aave" | "base")
+<span class="k">AboutTray</span>(figures)</pre>
+</section>
+
+<!-- 05 -->
+<section id="data">
+  <h2><span class="n">05</span>Data &amp; maths</h2>
+  <div class="grid g2">
+    <div class="glass card">
+      <h4><span class="dot" style="background:var(--lavender)"></span>projection.ts</h4>
+      <div class="path">src/projection.ts · plan.ts</div>
+      <p>360 months, computed once per plan and rate. The APY is already a compounded annual yield, so a year grows by exactly <code>1 + APY</code>. Growth uses <code>L = ln(1 + APY)</code> via <code>Math.log1p</code>. Recurring deposits (monthly, weekly or daily) sum as a geometric series: deposit <i>k</i> has grown <code>e^(L(t − kp))</code>. <code>amountsAtMonth()</code> splits any month into deposited and earned. <code>plan.ts</code> holds the base rate, default plan, deposit caps and rate choices. <code>savedSimulation.ts</code> saves the last simulated plan (deposits and frequency, not the rate) and the rate choice in MMKV; anything this build couldn't have saved (over a cap, unknown frequency, bad JSON) is no plan. A restored plan shows as set up but skips the growth wave and haptics.</p>
+      <p>Defaults: <code>BASE_APY = 6%</code>, <code>$500</code> per month. Caps are $100k recurring and $10M one-off.</p>
+    </div>
+    <div class="glass card">
+      <h4><span class="dot" style="background:var(--teal)"></span>rate/</h4>
+      <div class="path">aaveRate.ts · useAaveRate.ts</div>
+      <p>Calls Aave's GraphQL API (<code>api.v3.aave.com</code>) and averages the stablecoins' recent supply APY. It needs most of a quarter's daily samples, so a gap can't pass for an average. GHO is left out because it earns by staking. Any unusable reserve throws, so one bad coin can't skew the mean. An average over 30% (<code>MAX_PLAUSIBLE_APY</code>) is a broken feed and counts as unusable. The rate is saved in MMKV for 30 days and refreshed hourly and when the app returns to the foreground (<code>focusManager</code> on <code>AppState</code>). With nothing saved, the label is a skeleton for up to 2.5 s (<code>RATE_WAIT_CAP_MS</code>, <code>isLate</code>), then the base-rate projection shows until Aave answers.</p>
+    </div>
+    <div class="glass card">
+      <h4><span class="dot" style="background:var(--amber)"></span>format.ts</h4>
+      <div class="path">src/format.ts</div>
+      <p>Money formatting for en, pt and es. On Android, Hermes builds an ICU matcher for each <code>Intl.NumberFormat</code> (about 8 ms each on the Redmi). So one probe reads the locale's number shape and the formatters are plain JS. Shapes the probe can't reproduce, like lakh grouping, keep <code>Intl</code>. Axis labels use two significant digits (<code>$5.8k</code>), and the tooltip uses two decimals in a unit.</p>
+    </div>
+    <div class="glass card">
+      <h4><span class="dot" style="background:var(--pink)"></span>i18n/</h4>
+      <div class="path">en.ts · pt.ts · es.ts · locale.ts</div>
+      <p>The locale resolves once per launch; iOS restarts the app when the language changes. <code>interpolate</code> and <code>interpolateParts</code> fill templates, keeping styled <code>&lt;Text&gt;</code> parts. Hermes has no <code>Intl.PluralRules</code>, so a one/other rule covers all three languages.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 06 -->
+<section id="hero">
+  <h2><span class="n">06</span>Hero amount</h2>
+  <p class="sub"><a class="file" href="../src/HeroAmount.tsx">HeroAmount.tsx</a> · <a class="file" href="../src/heroLayout.ts">heroLayout.ts</a> · <a class="file" href="../src/EarnedLine.tsx">EarnedLine.tsx</a></p>
+  <p>The balance is a <b>fixed set of 20 slots</b>, mounted once: <code>$</code>, twelve digit places (units first), four group separators, the decimal separator and two cents digits. A new amount costs no render.</p>
+  <div class="diagram glass">
+  <svg viewBox="0 0 960 150" role="img" aria-label="Hero slot layout">
+    <g font-family="ui-monospace, Menlo, monospace" font-size="13" text-anchor="middle">
+      <g id="slots"></g>
+    </g>
+    <text x="20" y="130" fill="#9a9eb5" font-size="12.5">JS: layOutHero() gives each slot's visibility, x, digit and glyph per amount.  UI thread: blends two layouts, so digits roll 3.4 → "3 rolling into 4".</text>
+  </svg>
+  </div>
+  <ul>
+    <li><b>Keyed by place from the units</b>, so a digit keeps its slot as the number grows a place.</li>
+    <li>Digits roll in the direction the amount moved. Slots that appear or go slide in from the front, and a slot that goes is gone in the first third.</li>
+    <li>While the chart is scrubbed, the scrubbed bar's amount shows at once so it keeps up with the finger. The first bar rolls in; moving between bars and letting go snap.</li>
+    <li>A mask keeps rolling digits inside room above and below the line, so none is cut off mid-roll.</li>
+    <li><code>EarnedLine</code> holds one prebuilt paragraph per bar and draws in the hero's canvas. Scrubbing swaps which one shows, and a tint gives it the theme's colours.</li>
+    <li>All 20 slots are recorded into one Skia picture per frame (one mapper), each glyph at its own alpha.</li>
+  </ul>
+</section>
+
+<!-- 07 -->
+<section id="chart">
+  <h2><span class="n">07</span>The chart</h2>
+  <p class="sub">One Skia canvas, one context, and layers you list as children. A chart is whatever its layers are.</p>
+
+  <div class="diagram glass">
+  <svg viewBox="0 0 960 340" role="img" aria-label="Chart architecture">
+    <rect x="20" y="20" width="300" height="300" rx="16" fill="#7fb0ff12" stroke="#7fb0ff55"/>
+    <text x="40" y="50" fill="#7fb0ff" font-size="14" font-weight="700">BarChart (root)</text>
+    <g font-size="12.5" fill="#d7d9ea">
+      <text x="40" y="80">owns data, zoom and scrub</text>
+      <text x="40" y="104">• growth wave when a plan arrives</text>
+      <text x="40" y="128">• zoom spring on range switch</text>
+      <text x="40" y="152">   (retargets mid-flight)</text>
+      <text x="40" y="176">• mounts ChartGestures the frame</text>
+      <text x="40" y="200">   after the first paint</text>
+      <text x="40" y="224">• scrub only if a layer needs it</text>
+      <text x="40" y="248">   (hasScrubLayer reads statics)</text>
+      <text x="40" y="290" fill="#9a9eb5">provides BarChartContext →</text>
+    </g>
+    <rect x="350" y="20" width="250" height="300" rx="16" fill="#ffffff08" stroke="#ffffff26"/>
+    <text x="370" y="50" fill="#fff" font-size="14" font-weight="700">BarChartContext</text>
+    <g font-size="12.5" fill="#d7d9ea">
+      <text x="370" y="80">frame: ChartFrame (shared)</text>
+      <text x="370" y="104">layout, bleed, plotScreenY</text>
+      <text x="370" y="128">endMonths for the range</text>
+      <text x="370" y="152">shownIndex: the scrubbed bar</text>
+      <text x="370" y="176">heldIndex: kept for the fade-out</text>
+      <text x="370" y="200">scrubProgress 0 → 1</text>
+      <text x="370" y="240" fill="#9a9eb5">a layer only projects the frame,</text>
+      <text x="370" y="258" fill="#9a9eb5">so any of them can be left out</text>
+    </g>
+    <text x="630" y="40" fill="#fff" font-size="14" font-weight="700">Layers, bottom → top (SavingsChart)</text>
+    <g font-size="12.5">
+      <rect x="630" y="52" width="310" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="645" y="72" fill="#fff">GridLabels</text><text x="925" y="72" fill="#9a9eb5" text-anchor="end">$ scale, fades under tall bars</text>
+      <rect x="630" y="86" width="310" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="645" y="106" fill="#fff">Bars</text><text x="925" y="106" fill="#9a9eb5" text-anchor="end">year 1 splits into months</text>
+      <rect x="630" y="120" width="310" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="645" y="140" fill="#fff">Dots</text><text x="925" y="140" fill="#9a9eb5" text-anchor="end">one per bar, fan out with months</text>
+      <rect x="630" y="154" width="310" height="30" rx="9" fill="#6fe0c814" stroke="#6fe0c855"/><text x="645" y="174" fill="#fff">Selection ★</text><text x="925" y="174" fill="#9a9eb5" text-anchor="end">scrubbed bar at full strength</text>
+      <rect x="630" y="188" width="310" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="645" y="208" fill="#fff">EdgeFade</text><text x="925" y="208" fill="#9a9eb5" text-anchor="end">page over the right margin</text>
+      <rect x="630" y="222" width="310" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="645" y="242" fill="#fff">GridLines</text><text x="925" y="242" fill="#9a9eb5" text-anchor="end">dashes over the bars</text>
+      <rect x="630" y="256" width="310" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="645" y="276" fill="#fff">Axis</text><text x="925" y="276" fill="#9a9eb5" text-anchor="end">dates under the plot</text>
+      <rect x="630" y="290" width="310" height="30" rx="9" fill="#6fe0c814" stroke="#6fe0c855"/><text x="645" y="310" fill="#fff">Tooltip ★</text><text x="925" y="310" fill="#9a9eb5" text-anchor="end">ScrubTooltip pill + arrow</text>
+    </g>
+    <g stroke="#ffffff40" stroke-width="1.3" fill="none"><path d="M320 170 H350"/><path d="M600 170 H630"/></g>
+  </svg>
+  <div class="legend"><span><span class="dot" style="background:var(--teal)"></span>★ scrub layers: listing one turns the scrub gesture on</span></div>
+  </div>
+
+  <div class="grid g3">
+    <div class="glass card"><h4>geometry.ts · bars.ts</h4><div class="path">pure, tested</div><p>Every bar any range can show: 11 monthly slots, then one per year. Year 1 doubles as month 12, so the 1Y ↔ 10Y zoom keeps it. <code>monthlyWeight</code> eases between monthly and yearly bars on a log scale. <code>barGeometry(slot, frame)</code> is a worklet that runs per frame; it eases bar widths onto whole device pixels as a zoom lands (<code>ui/pixels.ts</code>), since snapping mid-zoom flickers and snapping only at rest jumps.</p></div>
+    <div class="glass card"><h4>ChartGestures</h4><div class="path">src/chart/ChartGestures.tsx</div><p>The scrub sits beside the canvas over an empty hit view, so its renders never redraw the chart. It writes <code>selectedIndex</code>, and the haptic tick lands in the same frame as the bar.</p></div>
+    <div class="glass card"><h4>ScrubTooltip</h4><div class="path">tooltipBubble.ts</div><p>Drawn inside the canvas, so the pill, its arrow and its text move in the same frame. The box and arrow are one contour. Digits are measured as zeros so the width stays steady under the finger. The pill grows out of the arrow's tip.</p></div>
+    <div class="glass card"><h4>ChartAxis</h4><div class="path">src/chart/ChartAxis.tsx</div><p>A layer of the chart's own canvas, drawn in the room the screen leaves under the chart. Date labels are Skia paragraphs. A Paragraph ignores its Group's opacity, so labels are swapped for <code>null</code> instead of faded. Each one stays centred under its bar until it would cross the plot's edge.</p></div>
+    <div class="glass card"><h4>EdgeFade</h4><div class="path">layers/EdgeFade.tsx</div><p>Mid-zoom, bars run past the plot. A single rect paints the page gradient over the margin instead of masking the bars. Masking had pushed scrub p50 from 5 to 14 ms on the Redmi.</p></div>
+    <div class="glass card"><h4>useDerivedField</h4><div class="path">src/chart/useDerivedField.ts</div><p>Skia binds one value per prop. A mapper that builds several values fans them out through this hook.</p></div>
+  </div>
+</section>
+
+<!-- 08 -->
+<section id="glass">
+  <h2><span class="n">08</span>Glass</h2>
+  <p class="sub">Aave's glass as a native view, drawn in the same frame as its children, plus a finger light and stretch shared by every glass surface.</p>
+
+  <div class="diagram glass">
+  <svg viewBox="0 0 960 360" role="img" aria-label="Glass architecture">
+    <g font-size="13" font-weight="700" fill="#fff">
+      <rect x="20" y="20" width="220" height="150" rx="14" fill="#ffc97812" stroke="#ffc97855"/><text x="36" y="46">Consumers</text>
+      <rect x="270" y="20" width="230" height="150" rx="14" fill="#6fe0c812" stroke="#6fe0c855"/><text x="286" y="46">useGlassTouch()</text>
+      <rect x="530" y="20" width="410" height="150" rx="14" fill="#b6a8ff14" stroke="#b6a8ff60"/><text x="546" y="46">GlassView.tsx</text>
+    </g>
+    <g font-size="12" fill="#d7d9ea">
+      <text x="36" y="72">GlassMenu: pan picks a row</text>
+      <text x="36" y="94">GlassButton: pan, press on release</text>
+      <text x="36" y="116">PlanCard: observer only</text>
+      <text x="36" y="138">  (its own button keeps the tap)</text>
+      <text x="36" y="158" fill="#9a9eb5">useGlassTouchObserver()</text>
+
+      <text x="286" y="72">press · move · release</text>
+      <text x="286" y="94">x, y, strength (shared)</text>
+      <text x="286" y="116">rubber-band stretch past edges</text>
+      <text x="286" y="138">stretchTransform() worklet</text>
+      <text x="286" y="158">isInside(x, y, slop)</text>
+
+      <text x="546" y="72"><tspan fill="#b6a8ff">look</tspan> (GlassLook) → React props, rare</text>
+      <text x="546" y="94">  fill, rim, glow, sheen, shadow, lens, touchLight</text>
+      <text x="546" y="120"><tspan fill="#6fe0c8">GlassTouchLight</tspan>: a radial glass, clipped</text>
+      <text x="546" y="142">  moved by transform + opacity only (no commit)</text>
+    </g>
+    <g stroke="#ffffff45" stroke-width="1.3" fill="none"><path d="M240 95 H270"/><path d="M500 95 H530"/><path d="M735 170 V200"/></g>
+
+    <rect x="20" y="200" width="920" height="140" rx="14" fill="#ff9ad510" stroke="#ff9ad550"/>
+    <text x="36" y="226" fill="#ff9ad5" font-size="13" font-weight="700">AaveGlassModule → AaveGlassView (Swift / Kotlin)</text>
+    <g font-size="12" fill="#d7d9ea">
+      <text x="36" y="252">dark + light looks as props; setThemeMode() picks one natively → look rebuilt once in layout (no React render)</text>
+      <text x="36" y="274">A look without blur draws straight; with blur, the glass is cached in GPU layers</text>
+      <text x="36" y="296">Lens: copies the window behind the glass once as it opens, thins and blurs it, then bends it at the rim on the GPU</text>
+      <text x="36" y="318">As the glass scales in or stretches, the copy holds still and only the bend is redone (the copy is placed by layout, not transforms)</text>
+    </g>
+  </svg>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button type="button" class="on" data-tab="android">Android pipeline</button>
+    <button type="button" data-tab="ios">iOS pipeline</button>
+    <button type="button" data-tab="touch">Touch light &amp; stretch</button>
+  </div>
+  <div class="glass card tabpane on" id="tab-android" style="margin-top:10px">
+    <ol class="steps">
+      <li><b>Copy</b> the window under the glass with <code>PixelCopy</code> as it appears, while it's still see-through, so the glass isn't in its own copy. The region is where layout puts the glass at full size, padded by 32 dp, and taken at half the screen's pixels (the copy is blurred anyway). A copy that fails while the surface is replaced gets one retry a frame later.</li>
+      <li><b>Thin, then blur</b>: the copy becomes a hardware bitmap in a <code>RenderNode</code>. An AGSL pass makes the background eat 1.5 dp into whatever stands out from it, then a <code>RenderEffect</code> blur runs (<code>sigma = 0.57735 r + 0.5</code>; a CSS blur is two sigmas).</li>
+      <li><b>Bend</b> with an AGSL <code>RuntimeShader</code> drawn straight to the window: a rounded-rect distance field gives each pixel its depth from the rim. Inside the lip, the input moves towards the middle by the cube of how close it is to the rim, leaned towards the corners, thinned along the rim and softened across it. Red and blue split by a share of the bend, a faint reflection lights the lip, and the rim brightens only where it catches something brighter than the backdrop. The shader cuts the rounded edge itself, so no clip layer is needed.</li>
+      <li><b>Re-bend only when the glass moves</b>: the bend reads the glass's matrix to the window (<code>transformMatrixToGlobal</code>), so a scale-in or stretch redoes only the bend, never the copy or the blur.</li>
+      <li><b>Cache the rest</b>: a look with a blurred shadow or glow is rasterized once into GPU layers, so a window redraw (Skia redraws the chart every scrub frame) replays a texture. A plain fill like the page draws straight.</li>
+    </ol>
+    <p style="color:var(--muted);font-size:13.5px">The lens needs Android 14+. Older versions show the fill alone. The shadow shader needs 13+.</p>
+  </div>
+  <div class="glass card tabpane" id="tab-ios" style="margin-top:10px">
+    <ol class="steps">
+      <li><b>Copy</b> the window under the glass with <code>drawHierarchy(afterScreenUpdates: false)</code> on the next turn of the run loop, at one pixel a point, over where layout puts the glass, padded by its reach.</li>
+      <li><b>Thin and blur once on the GPU</b> on a <code>.userInteractive</code> queue: Core Image on a Metal <code>CIContext</code>, into a texture the GPU keeps.</li>
+      <li><b>Bend</b> with a <code>CIKernel</code> that matches the AGSL shader term for term. The shared constants are checked by <code>lensConstants.test.ts</code>, which fails if the two drift.</li>
+      <li>A <code>CADisplayLink</code> reads the glass's placement in the window each frame (scale-in and stretch are transforms on views above it, which tell it nothing) and re-bends into a <code>CAMetalLayer</code> only when it changed.</li>
+      <li>The glass's layers sit in a background view under the React children, which Fabric mounts one index higher.</li>
+    </ol>
+  </div>
+  <div class="glass card tabpane" id="tab-touch" style="margin-top:10px">
+<pre><span class="k">const</span> glass = useGlassTouch({ stretchLimit });
+<span class="c">// gesture callbacks (worklets)</span>
+onBegin   → glass.press(x, y)      <span class="c">// strength → 1 over 120 ms</span>
+onUpdate  → glass.move(x, y)       <span class="c">// past an edge: a 6 pt lead, then limit · tanh(d / 6·limit)</span>
+onFinalize→ glass.release()        <span class="c">// light fades, stretch springs back</span>
+
+&lt;Outer onLayout={glass.onLayout} gesture&gt;          <span class="c">// takes the touches</span>
+  &lt;Animated.View style={{ transform: glass.stretchTransform() }}&gt;   <span class="c">// inner, so the stretch doesn't move the finger's coordinates</span>
+    &lt;GlassView look={...} touch={glass.touch} /&gt;</pre>
+    <p>The stretch moves the edge towards the finger out, keeps the one behind still, and narrows the other axis a little, as if the glass kept its volume. Buttons stretch up to 6 pt, the card 8 pt, the menu 12 pt.</p>
+    <p><b>Tap gotcha:</b> with <code>minDistance: 0</code>, a tap that never moves <i>fails</i> the pan, and v3 reports a failed pan as <code>canceled</code>. So buttons and the menu decide on "let go over it", not <code>!event.canceled</code>.</p>
+  </div>
+
+  <h3>Where glass is used</h3>
+  <table class="glass tablewrap">
+    <tr><th>Surface</th><th>Look</th><th>Touch</th></tr>
+    <tr><td><code>PageGradient</code></td><td>Vertical fill, both themes' stops</td><td>None</td></tr>
+    <tr><td><code>GlassMenu</code></td><td>Lens over whatever is behind it (a window copy), tinted towards the tray, sheen, rim lit from the top left</td><td>Pan: glow (240 pt) + stretch + a row pill that glides in 150 ms</td></tr>
+    <tr><td><code>GlassButton</code></td><td>Flat fill in a 1 pt rim lit from the top left, plus a drop shadow; dark and light looks in one view</td><td>Pan: glow (63 pt), stretch, 1.06× bounce, press on release</td></tr>
+    <tr><td><code>PlanCard</code></td><td>Flat fill, 1 pt rim, inset glow; dark and light looks in one view</td><td>Manual observer: glow (160 pt), stretch; the inner button keeps its tap</td></tr>
+  </table>
+</section>
+
+<!-- 09 -->
+<section id="trays">
+  <h2><span class="n">09</span>Trays &amp; amount input</h2>
+  <div class="grid g2">
+    <div class="glass card"><h4>Tray</h4><div class="path">src/ui/Tray.tsx</div><p>A wrapper around TrueSheet: <code>openTray(name)</code> and <code>closeTray(name)</code> by name. It has a header with a divider, a back step, and steps that only fade while the sheet resizes natively. <code>useSetTrayDraggable</code> pins the sheet while a drag belongs to the menu, and <code>useIsTrayOpen</code> lets what the tray shows close with it.</p></div>
+    <div class="glass card"><h4>AddMoneyTray</h4><div class="path">src/trays/AddMoneyTray.tsx</div><p>One-off vs recurring tabs, where the selected tab <i>is</i> the plan. The recurring tab's chevron opens the <code>GlassMenu</code> (monthly, weekly, daily), which grows out of the tab. Keys land through <code>scheduleOnRN</code> at touch-down, so each one builds on the last instead of on render state.</p></div>
+    <div class="glass card"><h4>AmountDisplay</h4><div class="path">src/amount/</div><p>Each character is keyed by which occurrence of itself it is, so typing slides digits into new slots and only the new character animates in (<code>SlideTransition</code>, <code>CommaTransition</code>). <code>amountLayout()</code> works out the glyph row and its fit scale from Regola Bold advances read from the font file.</p></div>
+    <div class="glass card"><h4>Numpad</h4><div class="path">src/amount/Numpad.tsx</div><p>A key registers at touch-down, like a phone keypad: the press, the haptic and the new digit land in the same frame. The key's digit grows under the finger, with no highlight. <code>amountInput.ts</code> holds the pure key rules and is tested.</p></div>
+    <div class="glass card"><h4>InterestRateTray</h4><div class="path">src/trays/InfoTrays.tsx</div><p>Chooses the Aave average or the base rate. Explains where the rate comes from.</p></div>
+    <div class="glass card"><h4>AboutTray</h4><div class="path">src/trays/InfoTrays.tsx</div><p>"How it works": answer cards and the <code>A = P(1 + r/n)^nt</code> formula, whose variables turn blue on the Value tab, as Aave's do.</p></div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section id="theme">
+  <h2><span class="n">10</span>Theme switch</h2>
+  <p class="sub"><a class="file" href="../src/theme.tsx">theme.tsx</a>: dark is Aave's Future screen, light is Aave's light balance screen.</p>
+  <p>A switch <b>flips two shared values on the UI thread, with no render</b>: <code>themeModeValue</code> for Skia and <code>viewThemeModeValue</code> for views. Glass is different: each glass view gets both looks as props, and <code>setGlassThemeMode()</code> (called with the switch) makes one native call that sets every live glass to the other look. The page gradient is a vertical-fill glass view, so it switches the same way; icons switch their colours through animated props. Nothing is drawn twice per theme any more.</p>
+  <div class="callout">The views switch <b>3 frames after Skia</b>. Skia on Android presents through a TextureView, 3–4 frames behind the views around it (measured on the Redmi with <code>screenrecord</code>). A fade to hide the variation redrew the chart too slowly to keep up.</div>
+  <p>The choice is saved in MMKV. On Android, <code>SystemNightMode</code> (an inline Kotlin module plus a config plugin) saves the scheme for the system, so the next launch's splash and system bars come up in it. It's applied only when the app goes to the background, because it re-lays out every view. iOS takes its scheme from <code>Appearance</code> before the first frame.</p>
+</section>
+
+<!-- 11 -->
+<section id="text">
+  <h2><span class="n">11</span>Text, icons, haptics</h2>
+  <div class="grid g3">
+    <div class="glass card"><h4>Text</h4><div class="path">src/ui/Text.tsx</div><p>Uses PlainText's native label where it can. Nested text and fit-to-width fall back to RN <code>&lt;Text&gt;</code>. Only text given a <code>color</code> token registers theme animation hooks and recolours on the UI thread.</p></div>
+    <div class="glass card"><h4>Skia type</h4><div class="path">src/skia/</div><p>Labels in Skia are shaped Regola paragraphs, because Skia <code>&lt;Text&gt;</code> drops kerning, visibly on Android. They're built once in white and tinted through a layer paint.</p></div>
+    <div class="glass card"><h4>Icons</h4><div class="path">src/ui/Icon.tsx · icons.tsx</div><p>An icon font from SVGs, with one colour per layer. <code>ThemeModeIcon</code> is a moon that swells and loses its bite into a sun.</p></div>
+    <div class="glass card"><h4>SlidingTabs</h4><div class="path">src/ui/SlidingTabs.tsx</div><p>The range pills and the tray tabs. A pill is the label's width plus 13 pt each side. Tapping the selected tab again can open its options.</p></div>
+    <div class="glass card"><h4>controls.tsx</h4><div class="path">src/ui/controls.tsx</div><p><code>PrimaryButton</code>, <code>GlassButton</code>, <code>TrayIconButton</code>, <code>CircledGlyph</code> for the "?" and "ⓘ" marks, and <code>Hairline</code>. Section 12 goes through each.</p></div>
+    <div class="glass card"><h4>haptics.ts</h4><div class="path">src/haptics.ts</div><p>Called from a worklet, it fires on the UI thread through nitro-haptics; called from JS, it uses expo-haptics. R8 needs an explicit keep rule, or the medium haptic compiles to <code>throw null</code>.</p></div>
+  </div>
+  <p>The <b>"?" ↔ Reset morph</b> in <code>SavingsScreen</code> is drawn in Skia, so each part can blur as it fades, softest halfway through. The fade goes on the layer's paint, because on iOS a group's own opacity doesn't reach a blurred layer.</p>
+</section>
+
+<!-- 12 -->
+<section id="components">
+  <h2><span class="n">12</span>Component reference</h2>
+  <p class="sub">Every UI component, one at a time: what it's for, what it's made of, and how it works frame by frame. The tags say where the work runs: <span class="tag t-js">JS</span> lays out, <span class="tag t-ui">UI</span> runs as worklets, <span class="tag t-skia">Skia</span> draws on a canvas, <span class="tag t-nat">Native</span> is our own Swift or Kotlin.</p>
+
+  <div class="chips">
+    <span class="grp">Primitives</span>
+    <a href="#c-press">usePressGesture</a><a href="#c-pressable">PressableOpacity · Scale</a><a href="#c-text">Text</a><a href="#c-icon">Icon</a><a href="#c-skeleton">Skeleton</a><a href="#c-damage">DamageBoundary</a><a href="#c-pixels">pixels</a><a href="#c-small">Hairline · CircledGlyph</a>
+  </div>
+  <div class="chips">
+    <span class="grp">Controls</span>
+    <a href="#c-primary">PrimaryButton</a><a href="#c-glassbutton">GlassButton</a><a href="#c-trayicon">TrayIconButton</a><a href="#c-tabs">SlidingTabs</a><a href="#c-themeicon">ThemeModeIcon · ThemeToggle</a><a href="#c-helpreset">HelpResetButton</a>
+  </div>
+  <div class="chips">
+    <span class="grp">Glass</span>
+    <a href="#c-glassview">GlassView</a><a href="#c-glassnative">AaveGlassView</a><a href="#c-glasstouch">useGlassTouch</a><a href="#c-touchlight">GlassTouchLight</a><a href="#c-menu">GlassMenu</a>
+  </div>
+  <div class="chips">
+    <span class="grp">Screen</span>
+    <a href="#c-screen">SavingsScreen</a><a href="#c-page">PageGradient</a><a href="#c-rate">Rate row</a><a href="#c-hero">HeroAmount</a><a href="#c-earned">EarnedLine</a><a href="#c-plancard">PlanCard</a>
+  </div>
+  <div class="chips">
+    <span class="grp">Chart</span>
+    <a href="#c-barchart">BarChart</a><a href="#c-layers">The layers</a><a href="#c-gestures">ChartGestures</a><a href="#c-tooltip">ScrubTooltip</a><a href="#c-axis">ChartAxis</a><a href="#c-chartskeleton">ChartSkeleton</a>
+  </div>
+  <div class="chips">
+    <span class="grp">Trays</span>
+    <a href="#c-tray">Tray</a><a href="#c-addmoney">AddMoneyTray</a><a href="#c-amount">AmountDisplay</a><a href="#c-numpad">Numpad</a><a href="#c-ratetray">InterestRateTray</a><a href="#c-about">AboutTray</a>
+  </div>
+  <div class="chips">
+    <span class="grp">Theme hooks</span>
+    <a href="#c-themehooks">useThemedStyle · useViewColor · useThemeColor · useThemeTint</a>
+  </div>
+
+  <!-- ───────── Primitives ───────── -->
+  <div class="comp-group">
+    <h3>Primitives</h3>
+    <p class="sub">The few pieces everything else is built from. They exist so that a press, a colour or a repaint never has to wait on the JS thread.</p>
+
+    <div class="diagram glass">
+    <svg viewBox="0 0 960 230" role="img" aria-label="Timeline of a press">
+      <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ffffff88"/></marker></defs>
+      <text x="20" y="28" fill="#fff" font-size="14" font-weight="700">One tap through usePressGesture</text>
+      <g font-size="12" fill="#9a9eb5" font-weight="600" letter-spacing="1">
+        <text x="20" y="78">UI THREAD</text><text x="20" y="168">JS THREAD</text>
+      </g>
+      <line x1="120" y1="74" x2="940" y2="74" stroke="#6fe0c855" stroke-width="2"/>
+      <line x1="120" y1="164" x2="940" y2="164" stroke="#ffc97855" stroke-width="2"/>
+      <g font-size="12" fill="#d7d9ea">
+        <circle cx="170" cy="74" r="6" fill="#6fe0c8"/><text x="170" y="56" text-anchor="middle">touch-down</text>
+        <text x="170" y="100" text-anchor="middle" fill="#9a9eb5">onBegin: isPressed = true</text>
+        <text x="170" y="116" text-anchor="middle" fill="#9a9eb5">dim / shrink starts</text>
+        <circle cx="470" cy="74" r="6" fill="#6fe0c8"/><text x="470" y="56" text-anchor="middle">tap lands (lift ≤ 10 pt)</text>
+        <text x="470" y="100" text-anchor="middle" fill="#9a9eb5">onDeactivate: haptic, onPressUI()</text>
+        <text x="470" y="116" text-anchor="middle" fill="#9a9eb5">then scheduleOnRN(runPress)</text>
+        <circle cx="720" cy="74" r="6" fill="#6fe0c8"/><text x="720" y="56" text-anchor="middle">onFinalize</text>
+        <text x="720" y="100" text-anchor="middle" fill="#9a9eb5">isPressed = false, springs back</text>
+        <circle cx="560" cy="164" r="6" fill="#ffc978"/><text x="560" y="196" text-anchor="middle">runPress: if latest.enabled → latest.onPress()</text>
+        <text x="560" y="212" text-anchor="middle" fill="#9a9eb5">the render it causes can lag; the feedback above already happened</text>
+      </g>
+      <path d="M478 84 C 510 120, 530 130, 556 156" stroke="#ffffff55" stroke-width="1.4" fill="none" marker-end="url(#ah2)"/>
+    </svg>
+    </div>
+
+    <div class="glass comp" id="c-press">
+      <header><h4>usePressGesture</h4><span class="path">src/ui/usePressGesture.ts</span><span class="tags"><span class="tag t-ui">UI</span><span class="tag t-js">JS</span></span></header>
+      <p>The tap every pressable in the app uses. Press state starts on the UI thread at touch-down, so the feedback never waits for a busy JS thread; <code>onPress</code> runs on JS once the tap lands. It returns <code>{ gesture, isPressed, targetProps }</code>: render the target inside a <code>GestureDetector</code> and spread <code>targetProps</code> on it.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li>A Gesture Handler v3 <code>useTapGesture</code> with <code>maxDistance: 10</code>: past that the finger is scrolling, and the press cancels. <code>maxDuration</code> is a day, not infinity, because iOS converts it to int64 nanoseconds and <code>MAX_SAFE_INTEGER</code> overflows.</li>
+        <li><code>onBegin</code> sets the <code>isPressed</code> shared value. <code>onDeactivate</code>, if the tap wasn't cancelled, fires <code>pressHaptic</code> and the optional <code>onPressUI</code> worklet on the UI thread, then hops to JS. <code>onFinalize</code> clears <code>isPressed</code>.</li>
+        <li><code>onPress</code> and <code>enabled</code> are read from a ref refreshed in a layout effect. An inline callback changes every render, and a changed closure makes Reanimated re-register the gesture's handler, so the gesture never sees it directly. The stable <code>runPress</code> also checks <code>enabled</code> again, because a tap queued on the UI thread can land after the button turned disabled.</li>
+        <li><code>targetProps</code> makes the view accessible with one <code>activate</code> action (a plain view has no click) that does what a tap does, and claims the JS responder so an enclosing pressable doesn't fire on the same touch.</li>
+      </ol>
+      <h5>Options</h5>
+      <table>
+        <tr><td>onPress</td><td>JS, after the tap lands</td></tr>
+        <tr><td>onPressUI</td><td>a worklet run as the tap lands, ahead of <code>onPress</code>: motion that shouldn't wait for the render <code>onPress</code> causes (SlidingTabs moves its selection with it)</td></tr>
+        <tr><td>pressHaptic</td><td>fired on the UI thread when the tap lands, so a scroll that starts on the target stays silent</td></tr>
+        <tr><td>enabled · hitSlop</td><td>passed to the tap and to the target</td></tr>
+      </table>
+    </div>
+
+    <div class="glass comp" id="c-pressable">
+      <header><h4>PressableOpacity · PressableScale</h4><span class="path">src/ui/Pressable.tsx</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>The two looks of a press, built on <code>usePressGesture</code>. Both wrap their children in an <code>Animated.View</code> whose style is a worklet of <code>isPressed</code>, eased over 250 ms on <code>bezier(0.25, 0.1, 0.25, 1)</code>.</p>
+      <ul>
+        <li><b>PressableOpacity</b> dims to 0.5: rows, tabs and text buttons (the rate row, SlidingTabs, the rate tray's radio rows, the About tray's links).</li>
+        <li><b>PressableScale</b> shrinks to 0.96: solid buttons (<code>PrimaryButton</code>, <code>TrayIconButton</code>).</li>
+      </ul>
+      <p>A disabled one adds <code>disabled</code> to its accessibility state. These replaced the old pressto library.</p>
+    </div>
+
+    <div class="glass comp" id="c-text">
+      <header><h4>Text</h4><span class="path">src/ui/Text.tsx</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-ui">UI</span></span></header>
+      <p>The app's only text component. It picks the cheapest renderer that can draw what it's given, and recolours on the UI thread when it has a theme colour.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li>A single run of plain strings and numbers goes to <code>react-native-plain-text</code>'s native label, which is cheaper than RN <code>&lt;Text&gt;</code>. Nested text (checked through <code>unstable_TextAncestorContext</code>), mixed children and <code>fit</code> fall back to RN <code>&lt;Text&gt;</code>; <code>fit</code> sets <code>adjustsFontSizeToFit</code> on one line.</li>
+        <li>With a <code>color</code> token, it registers one animated hook: PlainText gets an animated <code>color</code> prop (PlainText reads its native colour from <code>style.color</code> and leaves it out of its types), RN text gets an animated style. Both read <code>useViewColor</code>, so a theme switch recolours them with no render.</li>
+        <li>Without a colour it registers nothing. Toggling <code>color</code> between set and unset remounts it, because the hook count changes.</li>
+        <li><code>unstable_lineHeightClippingCompat</code> makes PlainText clip under a short line height like RN <code>&lt;Text&gt;</code>, which every layout here was measured against.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-icon">
+      <header><h4>Icon</h4><span class="path">src/ui/Icon.tsx · icons/svg-source</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>A glyph from the app's icon font. <code>bun run generate:icons</code> builds it with nano-icons from the SVGs in <code>icons/svg-source</code> and writes a glyph map. <code>size</code> is the SVG's viewBox height in points. A two-tone icon (the book, the document) takes one colour token per layer, in the SVG's order.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li>On render it builds both themes' colour arrays up front (<code>byMode</code>), already run through <code>processColor</code>, one entry per layer.</li>
+        <li>An animated prop sets the native view's per-layer <code>colors</code> from <code>viewThemeModeValue</code>, so a theme switch needs no render.</li>
+        <li>It mounts with the current mode's colours through the plain <code>color</code> prop, because the icon set renders from <code>color</code> and ignores the animated <code>colors</code> until the mode next changes.</li>
+        <li>Icons are decorative and hidden from screen readers; the control around them carries the label.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-skeleton">
+      <header><h4>Skeleton</h4><span class="path">src/ui/Skeleton.tsx</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>A grey box standing in for a value that's still loading: the theme's <code>skeleton</code> fill, no touches, and a 120 ms fade-out as it leaves, so it cross-fades with the value fading in. Used for the rate value, <code>HeroSkeleton</code> (two boxes as tall as the amount and the earned line) and <code>ChartSkeleton</code>.</p>
+    </div>
+
+    <div class="glass comp" id="c-damage">
+      <header><h4>DamageBoundary</h4><span class="path">src/ui/damage/DamageBoundary.tsx · DamageBoundaryModule.kt</span><span class="tags"><span class="tag t-nat">Native</span></span></header>
+      <p>Keeps something that animates from repainting the whole window on Android. React Native's views don't clip their children, so HWUI can't bound what a changed view damages: one spring on a pressed button repaints everything, the chart's Skia canvas included.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li>On Android it renders an inline Expo view, <code>DamageBoundaryView</code>. A plain Android parent clips its child to the child's bounds, which also bounds the damage of everything inside. Its <code>onLayout</code> does nothing, so React Native keeps placing the child.</li>
+        <li>Inside sits one child view grown by <code>outset</code> on every side (a negative margin with the same padding), so the clip reaches past whatever draws outside the content: a shadow, a press that grows the view, the stretch of glass.</li>
+        <li>On iOS it's a plain <code>View</code>: Core Animation already composites each layer by its own bounds.</li>
+      </ol>
+      <table>
+        <tr><td>GlassButton</td><td>outset 40: the light theme's 28 pt shadow, past the stretch and press</td></tr>
+        <tr><td>PlanCard</td><td>outset 24: the glow's 12 pt blur, past the stretch</td></tr>
+        <tr><td>range pills · Numpad keys · AmountDisplay</td><td>no outset: a pill growing in, a key's digit, a rolling digit</td></tr>
+      </table>
+    </div>
+
+    <div class="glass comp" id="c-pixels">
+      <header><h4>pixels.ts</h4><span class="path">src/ui/pixels.ts</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>Worklets that put what layout doesn't snap (Skia drawing, transforms) on whole device pixels. The Redmi's ratio of 2.75 puts few whole points on a pixel boundary, so a 1 pt line could come out 2 or 3 px wide depending on where it lands.</p>
+      <table>
+        <tr><td>snapToPixel(v, ratio)</td><td>the nearest device pixel: the plot origin, the menu's hover pill</td></tr>
+        <tr><td>wholePixels(v, ratio)</td><td>a stroke or gap in whole pixels, never under one: grid line width</td></tr>
+        <tr><td>snapStrokeToPixel(v, w, ratio)</td><td>a stroke's centre on a pixel boundary for an even width, on a pixel centre for an odd one, so it doesn't smear half a pixel: grid line y</td></tr>
+      </table>
+    </div>
+
+    <div class="glass comp" id="c-small">
+      <header><h4>Hairline · CircledGlyph</h4><span class="path">src/ui/controls.tsx</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p><b>Hairline</b> is a divider exactly <code>PixelRatio.roundToNearestPixel(1)</code> tall, so every divider is the same number of pixels. <b>CircledGlyph</b> is a ring with a glyph centred inside, the "ⓘ" after the rate. Both colour themselves through <code>useThemedStyle</code> and a coloured <code>Text</code>, so neither renders on a theme switch.</p>
+    </div>
+  </div>
+
+  <!-- ───────── Controls ───────── -->
+  <div class="comp-group">
+    <h3>Controls</h3>
+    <p class="sub">Buttons and tabs, all in <code>src/ui</code> except the two screen-only buttons.</p>
+
+    <div class="glass comp" id="c-primary">
+      <header><h4>PrimaryButton</h4><span class="path">src/ui/controls.tsx</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>The solid pill: "Simulate", "Done", "Set up", "Edit Simulation". A <code>PressableScale</code> around a 48 pt pill (or 32.4 pt with <code>compact</code>), filled with <code>primaryButton</code> or, with <code>isSecondary</code>, <code>secondaryButton</code>. Disabled, it drops to 0.4 opacity and stops taking taps. The fill and label colour switch with the theme on the UI thread.</p>
+    </div>
+
+    <div class="glass comp" id="c-glassbutton">
+      <header><h4>GlassButton</h4><span class="path">src/ui/controls.tsx</span><span class="tags"><span class="tag t-ui">UI</span><span class="tag t-nat">Native</span></span></header>
+      <p>The 42 pt round glass button over the page: the theme toggle and the "?"/Reset button. A flat fill in a 1 pt rim lit from the top left, with a drop shadow that's faint in dark mode and wide in light mode.</p>
+      <h5>What it's made of, outside in</h5>
+<pre>&lt;DamageBoundary outset={40}&gt;
+  &lt;GestureDetector gesture={pan}&gt;                 <span class="c">// minDistance 0, hitSlop 8</span>
+    &lt;Animated.View onLayout style={[size, glassStyle, bounce]}&gt;   <span class="c">// takes the touches, a11y button</span>
+      &lt;Animated.View style={stretchTransform}&gt;   <span class="c">// inside, so the stretch doesn't move the finger's coordinates</span>
+        &lt;GlassView look={GLASS_LOOKS} /&gt;          <span class="c">// both themes' looks</span>
+        &lt;GlassTouchLight radius={63} /&gt;
+        {children}</pre>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li>One pan from touch-down drives everything, so the light and stretch follow the finger even past the edge. <code>onBegin</code> presses the glass and starts the bounce; <code>onUpdate</code> moves the light; <code>onFinalize</code> releases both.</li>
+        <li>It presses if the finger is let go over the button (within the 8 pt slop). It can't use <code>!event.canceled</code>: a tap that never moves fails the pan, and v3 reports a failed pan as cancelled.</li>
+        <li>The bounce grows to 1.06× over 110 ms. On release it first finishes the grow if the tap was shorter than that, then springs back with a small overshoot (stiffness 420, damping 22), so every tap gets the whole up and down.</li>
+        <li><code>glassStyle</code> lets a caller animate the outer size: HelpResetButton widens it into a pill.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-trayicon">
+      <header><h4>TrayIconButton</h4><span class="path">src/ui/controls.tsx</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>A tray's flat 38 pt round button, close (×) or back (chevron) on a later step. A <code>PressableScale</code> with an 8 pt hit slop and the <code>trayClose</code> fill. <code>Tray</code> renders it; screens don't.</p>
+    </div>
+
+    <div class="glass comp" id="c-tabs">
+      <header><h4>SlidingTabs</h4><span class="path">src/ui/SlidingTabs.tsx</span><span class="tags"><span class="tag t-ui">UI</span><span class="tag t-js">JS</span></span></header>
+      <p>One component, two looks. <code>"pills"</code> is the range picker under the chart (6M 1Y 10Y 30Y). <code>"segmented"</code> is the track with a sliding thumb in the Add Money tray (One-off / Monthly) and the About tray's Formula / Value switch.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li>The selection as drawn is a shared value, <code>shownIndex</code>. A tap on a new tab sets it in <code>onPressUI</code>, on the UI thread as the tap lands, ahead of the render <code>onSelect</code> causes. An effect copies <code>selectedId</code> into it for selections that didn't come from a tap.</li>
+        <li><b>Segmented:</b> a thumb under the labels springs to <code>thumbIndex × tabWidth</code> (320 ms, damping ratio 0.85). Tab width is rounded to whole pixels on layout, so the thumb's edges stay sharp at every tab, not just the first.</li>
+        <li><b>Pills:</b> the fill doesn't slide. Each tab has its own <code>PillFill</code>; the new one grows in from 0.75× and settles without passing full size (220 ms, critically damped), while the old one fades in place in 120 ms. Pills are 47 × 32.6 pt, about Aave's label width plus 13 pt each side, and their labels stop growing at 1.3× font scale.</li>
+        <li>The selected tab's label switches to <code>foreground</code>, the rest are <code>tertiary</code>.</li>
+      </ol>
+      <h5>Props worth knowing</h5>
+      <table>
+        <tr><td>onSelectOnUI</td><td>a worklet run as a new tab is tapped. The range pills start the chart's zoom here, so it starts with the haptic.</td></tr>
+        <tr><td>selectHaptic</td><td>felt on the UI thread as a new tab is chosen</td></tr>
+        <tr><td>onPressSelected</td><td>a tap on the tab already selected: the recurring tab opens the frequency menu</td></tr>
+        <tr><td>selectedRef</td><td>a ref on the selected tab, for the GlassMenu to open from</td></tr>
+        <tr><td>trackColor · boldSelected</td><td>a different track fill on a card; the selected label in Semibold, as on Aave's formula tabs</td></tr>
+      </table>
+    </div>
+
+    <div class="glass comp" id="c-themeicon">
+      <header><h4>ThemeModeIcon · ThemeToggle</h4><span class="path">src/ui/icons.tsx · src/SavingsScreen.tsx</span><span class="tags"><span class="tag t-skia">Skia</span><span class="tag t-ui">UI</span></span></header>
+      <p>The toggle at the top right is a <code>GlassButton</code> holding <code>ThemeModeIcon</code>: a moon in dark mode that swells, turns and loses its bite into a sun in light mode.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li>A 22 pt Skia canvas. One spring, <code>moonness</code> (1 = moon), drives everything: damping 14, stiffness 160.</li>
+        <li>The body is a circle growing from 4.6 to 8.4 pt. The bite is a second circle drawn with <code>dstOut</code> inside a layer, so it cuts the body instead of painting over the page; its centre moves from 13 pt out (missing the small sun) to 5.2 pt.</li>
+        <li>The whole group turns −90° on its way to a moon. The eight rays are one prebuilt path that fades out by the halfway point and shrinks to 0.4×.</li>
+        <li><code>ThemeToggle</code> keeps the mode it shows in <code>useOptimistic</code>, so the icon turns as the tap lands, before React's copy of the mode catches up. The press calls <code>setThemeMode</code>, which flips the screen on the UI thread (see section 10).</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-helpreset">
+      <header><h4>HelpResetButton</h4><span class="path">src/SavingsScreen.tsx</span><span class="tags"><span class="tag t-skia">Skia</span><span class="tag t-ui">UI</span></span></header>
+      <p>The top-left button: a circled "?" that opens the About tray, which stretches into a "Reset" pill once a simulation is set up, and shrinks back after a reset.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li>A <code>GlassButton</code> whose <code>glassStyle</code> animates its width from 42 pt to the label's width plus 16 pt each side, on one spring, <code>resetness</code> (damping 18, stiffness 220).</li>
+        <li>Inside, one Skia canvas draws both states, so each can blur as it fades, softest halfway through its fade. The "?" ring and glyph fade and blur to 5 over the first half and shrink to 0.5×. "Reset" fades in and sharpens from 0.4 to 1.</li>
+        <li>"Reset" is a shaped Regola paragraph built in white, coloured by a <code>BlendColor srcIn</code> on its layer. Skia's own <code>&lt;Text&gt;</code> drops kerning, and on Android "Reset" sat visibly apart.</li>
+        <li>The fade goes on the layer's paint, not the group's opacity: on iOS a group's own opacity doesn't reach a blurred layer, which left the part showing.</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- ───────── Glass ───────── -->
+  <div class="comp-group">
+    <h3>Glass</h3>
+    <p class="sub">One native view draws every glass surface; two hooks add the finger's light and stretch. Section 08 has the pipelines; this is each piece's contract.</p>
+
+    <div class="diagram glass">
+    <svg viewBox="0 0 960 250" role="img" aria-label="Layers inside one glass view">
+      <text x="20" y="28" fill="#fff" font-size="14" font-weight="700">Inside one AaveGlassView, bottom → top</text>
+      <g font-size="12.5">
+        <rect x="20" y="44" width="300" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="34" y="64" fill="#fff">shadow</text><text x="306" y="64" fill="#9a9eb5" text-anchor="end">outside the shape only, like CSS</text>
+        <rect x="20" y="78" width="300" height="30" rx="9" fill="#b6a8ff14" stroke="#b6a8ff60"/><text x="34" y="98" fill="#fff">lens</text><text x="306" y="98" fill="#9a9eb5" text-anchor="end">blurred, bent window copy</text>
+        <rect x="20" y="112" width="300" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="34" y="132" fill="#fff">fill</text><text x="306" y="132" fill="#9a9eb5" text-anchor="end">flat, radial or vertical stops</text>
+        <rect x="20" y="146" width="300" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="34" y="166" fill="#fff">glow · sheen</text><text x="306" y="166" fill="#9a9eb5" text-anchor="end">inset shadow; top-down sheen</text>
+        <rect x="20" y="180" width="300" height="30" rx="9" fill="#ffffff0d" stroke="#ffffff22"/><text x="34" y="200" fill="#fff">rim</text><text x="306" y="200" fill="#9a9eb5" text-anchor="end">one colour, or lit → shaded</text>
+        <rect x="20" y="214" width="300" height="30" rx="9" fill="#6fe0c814" stroke="#6fe0c855"/><text x="34" y="234" fill="#fff">React children</text><text x="306" y="234" fill="#9a9eb5" text-anchor="end">GlassTouchLight, content</text>
+      </g>
+      <g font-size="12.5" fill="#d7d9ea">
+        <text x="360" y="64">Looks arrive once, as two props: <tspan fill="#b6a8ff">dark</tspan> and <tspan fill="#b6a8ff">light</tspan>.</text>
+        <text x="360" y="88">setGlassThemeMode() picks one in every live view natively,</text>
+        <text x="360" y="106">so a theme switch costs no React render.</text>
+        <text x="360" y="138">iOS: CALayers in a background view at index 0; Fabric mounts</text>
+        <text x="360" y="156">children at index + 1.  Android: drawn in dispatchDraw before</text>
+        <text x="360" y="174">the children; cached in GPU layers only when the look has a blur.</text>
+        <text x="360" y="206">The finger's light is a second, tiny GlassView, moved by</text>
+        <text x="360" y="224">transform and opacity only: a touch frame commits nothing.</text>
+      </g>
+    </svg>
+    </div>
+
+    <div class="glass comp" id="c-glassview">
+      <header><h4>GlassView</h4><span class="path">src/ui/glass/GlassView.tsx</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-nat">Native</span></span></header>
+      <p>The React side of the native glass. It takes a <code>look</code>, either one <code>GlassLook</code> for both themes or <code>{ dark, light }</code>, plus ordinary view props. Blurs follow CSS: <code>blur</code> is twice the Gaussian sigma.</p>
+      <table>
+        <tr><td>cornerRadius</td><td>circular corners, the same on both platforms (UIKit's continuous corners drew the rim off the fill)</td></tr>
+        <tr><td>fill · isFillVertical</td><td>one colour fills flat; <code>"color pos%"</code> stops fill radially from centre to rim (an ellipse reaching the closest sides, like CSS <code>closest-side</code>), or top to bottom with <code>isFillVertical</code></td></tr>
+        <tr><td>rim</td><td>one colour strokes flat; two light the rim from the top left. Width is rounded to whole pixels.</td></tr>
+        <tr><td>glow</td><td>an inset shadow: the rim lightens or darkens inward</td></tr>
+        <tr><td>sheen</td><td>a top-down sheen fading out over <code>height</code></td></tr>
+        <tr><td>shadow</td><td>a drop shadow drawn only outside the shape, cut a pixel inside its edge so there's no seam</td></tr>
+        <tr><td>lens</td><td><code>blur</code>, and <code>bezel</code>, <code>refraction</code> and <code>chroma</code> as shares of the shorter side, so a small glass bends as much for its size</td></tr>
+      </table>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li><code>buildNativeLook</code> flattens a look into plain numbers: colours through <code>processColor</code>, stops parsed by <code>stops.ts</code> (a colour may contain spaces, so the position is read off the end).</li>
+        <li>Built looks are cached in a <code>WeakMap</code> keyed by the look object. Looks are module constants built with <code>byMode</code>, so a re-render hands Fabric the same objects and no prop update reaches the view. Build a look inline and you lose that.</li>
+        <li><code>setGlassThemeMode(mode)</code> is one native call that switches every live glass. <code>warmUpGlassLens()</code> compiles the lens's GPU pipelines ahead of the first menu; App calls it on an idle callback after launch (on the Redmi, the first open had spent 38 ms of one frame compiling them).</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-glassnative">
+      <header><h4>AaveGlassView</h4><span class="path">AaveGlassView.swift · AaveGlassLens.swift · AaveGlassView.kt</span><span class="tags"><span class="tag t-nat">Native</span></span></header>
+      <p>The native view behind <code>GlassView</code>, registered by <code>AaveGlassModule</code> on both platforms.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li><b>Looks and themes.</b> Both looks arrive as props. A static set of every live view lets <code>setThemeMode</code> reach them all. Expo sets every prop again on each update, so a view compares old and new looks and only marks itself stale on a real change. On Android the switch waits 3 frames to land with the views (Skia presents behind them); at launch it applies at once, so the first glass doesn't mount in the wrong theme.</li>
+        <li><b>The body.</b> iOS builds it from Core Animation layers: an even-odd masked shadow, a gradient fill, a shape-layer glow, a gradient sheen and a masked gradient rim, laid out with actions disabled. Android draws it in <code>dispatchDraw</code>: a runtime shader for the shadow (a logistic falloff close to a Gaussian, with alpha-only dither so a faint, wide shadow doesn't band in 8 bits), a gradient fill, a blurred cut-out for the glow.</li>
+        <li><b>Caching.</b> Only a look with a blur is worth a GPU texture. Android records it into a <code>RenderNode</code> (API 29+); iOS rasterizes the masks and glow. A plain fill like the page draws straight, without a screen-sized bitmap.</li>
+        <li><b>The lens</b> copies the window behind the glass once as it opens, thins and blurs it once, then bends it on the GPU wherever the glass is on screen (Android 14+ and iOS; older Android shows the fill). Section 08 walks both pipelines.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-glasstouch">
+      <header><h4>useGlassTouch · useGlassTouchObserver</h4><span class="path">src/ui/glass/useGlassTouch.tsx</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>A finger on a glass surface: where it is, how lit the glass is, and how far it stretches once the finger leaves the edges. It takes a <code>stretchLimit</code> and returns worklets for a gesture to call.</p>
+      <table>
+        <tr><td>press(x, y)</td><td>the light rises to full over 120 ms</td></tr>
+        <tr><td>move(x, y)</td><td>moves the light; past an edge, works out the lead and stretch</td></tr>
+        <tr><td>release()</td><td>the light fades; the stretch snaps back with no overshoot (stiffness 900, damping 60)</td></tr>
+        <tr><td>isInside(x, y, slop)</td><td>for "let go over it" decisions</td></tr>
+        <tr><td>stretchTransform()</td><td>translate and scale for an inner view</td></tr>
+        <tr><td>touch</td><td><code>{ x, y, strength, reach }</code> for <code>GlassTouchLight</code></td></tr>
+      </table>
+      <h5>The stretch</h5>
+      <ol class="steps">
+        <li>The first 6 pt past an edge only shifts the whole surface 1 pt towards the finger (the lead).</li>
+        <li>Beyond that the near edge follows a rubber band, <code>limit · tanh(d / (6 · limit))</code>: about 1 pt per 6 pt of drag at first, then ever less, never past the limit. The surface also leans up to 2 pt more towards the drag.</li>
+        <li>The edge towards the finger moves out and the one behind stays put (translate by half the stretch, scale by the rest). The other axis narrows by 0.3 of the growth, as if the glass kept its volume.</li>
+        <li><code>reach</code> goes 0 → 1 as the stretch nears 85% of its limit; the light dims by up to 90% with it, so it leaves the glass with the finger.</li>
+      </ol>
+      <p><b>useGlassTouchObserver</b> drives the same handle from a manual gesture that only watches touches and never activates, for glass that holds buttons of its own. PlanCard uses it so its button keeps its press. Limits: buttons 6 pt, the card 8 pt, the menu 12 pt.</p>
+    </div>
+
+    <div class="glass comp" id="c-touchlight">
+      <header><h4>GlassTouchLight</h4><span class="path">src/ui/glass/useGlassTouch.tsx</span><span class="tags"><span class="tag t-ui">UI</span><span class="tag t-nat">Native</span></span></header>
+      <p>The light a finger casts on glass. Put it right over the surface's <code>GlassView</code>.</p>
+      <ol class="steps">
+        <li>An absolute-fill view clipped to the surface's corner radius holds a square twice the light's radius.</li>
+        <li>That square is itself a small <code>GlassView</code> whose look is a radial fill of the theme's <code>glassMenuGlow</code> with a Gaussian-like falloff (1, 0.78, 0.43, 0.17, 0.05, 0), so the light has no edge to read as a circle. Both themes' looks are built once.</li>
+        <li>An animated style moves it to the finger with <code>translateX/Y</code> and fades it with <code>strength × (1 − reach × 0.9)</code>. Reanimated sets transform and opacity on the view directly, so a touch frame commits nothing. It's moved on a plain view because Reanimated doesn't reliably set them on the native glass.</li>
+      </ol>
+      <p>Radii: GlassButton 63 pt (1.5× the button, so it spills past and reads as light), PlanCard 160 pt, GlassMenu 240 pt.</p>
+    </div>
+
+    <div class="glass comp" id="c-menu">
+      <header><h4>GlassMenu</h4><span class="path">src/ui/GlassMenu.tsx</span><span class="tags"><span class="tag t-ui">UI</span><span class="tag t-nat">Native</span></span></header>
+      <p>Aave's frequency menu (Monthly, Weekly, Daily): a lens of glass that opens above an anchor, right-aligned with it, grows out of the anchor's middle and shrinks back into it. Render it last inside the view it should cover; a tap outside calls <code>onClose</code>.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li><b>Placing.</b> When it opens, a layout effect measures both the anchor and the menu's covering view in the window, and divides the difference by the covering view's scale. iOS 26 draws a floating tray as a full-width sheet scaled down, so window points and the menu's own points differ. The menu sits 4 pt above the anchor, its right edge on the anchor's, 41.7 pt a row plus 8 pt top and bottom.</li>
+        <li><b>Opening.</b> <code>openness</code> springs to 1 (600 ms, damping ratio 0.75, launched with velocity 4, so it reaches full size sooner and its overshoot still settles slowly). It scales from 0.6×, translated so it grows out of the anchor's middle, and turns opaque by 40% openness. From rest the finished close is cleared first so the launch speed applies; reopened mid-close it turns around from where it is.</li>
+        <li><b>Closing.</b> 160 ms on a strong ease-out, all the way down to nothing as its middle drifts onto the anchor, with opacity <code>1 − gone²</code>: it holds, then goes as it lands.</li>
+        <li><b>Drawn only while needed.</b> The glass mounts on open and unmounts when the close finishes. Mounted while closed, its lens would copy and blur the window again on every keystroke behind it.</li>
+        <li><b>Picking.</b> One pan from touch-down: pressing lights a hover pill on the row under the finger, sliding glides it to the next row in 150 ms with a selection haptic, and letting go picks that row. Off the menu, the pill fades and nothing is picked. The pill rests on whole pixels.</li>
+        <li><b>The tray.</b> AddMoneyTray holds the sheet still while the menu is open (<code>useSetTrayDraggable</code>), so a drag stretches the menu instead of the sheet, and closes the menu if the tray starts closing (<code>useIsTrayOpen</code>).</li>
+      </ol>
+      <p>Look: corner 35, a lens with blur 10, bezel 0.125, refraction 0.3 and chroma 0.05 (a fifth, Aave's default, turned the long lip orange), a 16 pt sheen, a 24 pt shadow dropped 6 pt, a rim lit from the top left. For screen readers it's a modal <code>menu</code> of <code>menuitem</code>s, each with an activate action.</p>
+    </div>
+  </div>
+
+  <!-- ───────── Screen ───────── -->
+  <div class="comp-group">
+    <h3>Screen</h3>
+    <p class="sub">What <code>SavingsScreen</code> lays out, top to bottom.</p>
+
+    <div class="glass comp" id="c-screen">
+      <header><h4>SavingsScreen</h4><span class="path">src/SavingsScreen.tsx</span><span class="tags"><span class="tag t-js">JS</span></span></header>
+      <p>The only screen. It owns the state, composes the regions, and mounts the three trays. Its layout follows Aave's Future screen on a 375 × 812 pt phone on a 4 pt grid; the chart takes whatever height a taller screen adds.</p>
+      <h5>State</h5>
+      <table>
+        <tr><td>plan · simulation · resetCount</td><td>one state object, restored from MMKV. <code>simulation</code> is <code>none</code>, <code>restored</code> (shows as set up, no growth wave) or <code>fresh</code> (just simulated: the wave plays with haptics). Reset bumps <code>resetCount</code>, which remounts the Add Money form.</td></tr>
+        <tr><td>rangeId · zoomMonths</td><td>the range in React, and the months the chart zooms to as a shared value. A pill tap sets <code>zoomMonths</code> on the UI thread, so the zoom starts with the haptic, not after this screen re-renders.</td></tr>
+        <tr><td>selectedIndex</td><td>the scrubbed bar, −1 at rest; hero, chart and axis read it on the UI thread</td></tr>
+        <tr><td>rateChoice · aaveRate</td><td>restored choice and the live rate; <code>effectiveRate</code> gives the APY and whether it's Aave's</td></tr>
+        <tr><td>projection</td><td>memoised on plan and APY: the chart retargets when its identity changes, so a re-render mustn't hand it a new one</td></tr>
+      </table>
+      <h5>Loading</h5>
+      <p>While the Aave rate is pending and not yet late (2.5 s), the rate value, hero and chart show skeletons instead of a base-rate projection labelled as Aave's. The hero fades in over 200 ms only if the launch started pending; a launch with a saved rate shows the values in the first frame. The status and navigation bar icons follow React's copy of the mode, since they can't take a shared value.</p>
+    </div>
+
+    <div class="glass comp" id="c-page">
+      <header><h4>PageGradient</h4><span class="path">src/SavingsScreen.tsx</span><span class="tags"><span class="tag t-nat">Native</span></span></header>
+      <p>The page behind everything: navy at the top fading to near-black under the chart in dark mode, flat white in light mode. It's one <code>GlassView</code> with a vertical fill whose stops sit at fixed points from the top (0 to 440 pt), turned into percentages of the window height. Because it's glass, it switches theme natively with the other glass, in the same frame as the views around it. <code>EdgeFade</code> paints the same gradient in Skia over the chart's margin.</p>
+    </div>
+
+    <div class="glass comp" id="c-rate">
+      <header><h4>Rate row</h4><span class="path">src/SavingsScreen.tsx</span><span class="tags"><span class="tag t-js">JS</span></span></header>
+      <p>"Aave Stablecoin Rate 3.69% ⓘ": a <code>PressableOpacity</code> that opens the Interest Rate tray. While the rate is pending the label stays and a 52 × 15 pt <code>Skeleton</code> stands in for the value. On the base rate it reads "Simulated Rate". Its accessibility label always says both the label and the value (or "loading").</p>
+    </div>
+
+    <div class="glass comp" id="c-hero">
+      <header><h4>HeroAmount</h4><span class="path">src/HeroAmount.tsx · heroLayout.ts</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-ui">UI</span><span class="tag t-skia">Skia</span></span></header>
+      <p>The balance at the end of the range, or of the scrubbed bar. Section 06 shows the 20 slots; this is the frame-by-frame.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li><b>JS, per amount:</b> <code>layOutTarget</code> splits dollars and cents, formats them, and <code>layOutHero</code> gives each slot its presence, centre, digit or glyph, the line's width, and a scale that shrinks a line wider than the screen less 20 pt each side. It does this for the rest amount and for every bar of the range up front, from glyph ids and advances read from Regola Bold.</li>
+        <li><b>UI thread, per change:</b> one animated reaction watches <code>selectedIndex</code> and the rest target. Going from rest to the first scrubbed bar rolls; moving between bars and letting go snap, so the number keeps up with the finger. A roll blends from wherever the slots are now (<code>frameTowards</code>) over 400 ms on <code>bezier(0.25, 1, 0.5, 1)</code>.</li>
+        <li><b>Rolling:</b> a digit slot holds a float (3.4 is 3 rolling into 4), counted in the direction the amount moved. Each frame draws the digit on show moving up and fading out, and the next one coming up from below and fading in, each centred on its own width. A slot that appears slides in from 0.3 em to the left; one that goes is gone in the first third.</li>
+        <li><b>Skia, per frame:</b> every slot is recorded into one <code>SkPicture</code> with a reused recorder and paint, each glyph at its own alpha: one mapper and one node instead of several per slot. The picture is the alpha mask for a rect filled with the theme's hero gradient, run edge to edge across the drawn amount. A <code>dstIn</code> vertical fade makes digits fade through 40 pt of room above the line and 10 pt below.</li>
+        <li><b>Fallbacks:</b> if Regola fails to load, <code>matchFont</code> supplies a system face. <code>HeroSkeleton</code> keeps the same height while the rate loads. The canvas is labelled for screen readers with the amount and the earned line.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-earned">
+      <header><h4>EarnedLine</h4><span class="path">src/EarnedLine.tsx</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-skia">Skia</span></span></header>
+      <p>"$1,234 Earned in 30 years" under the hero, drawn inside the hero's canvas.</p>
+      <ol class="steps">
+        <li>On JS, once per plan and range, one Regola paragraph per bar: the amount in Semibold white, an 8 pt gap, the period in Regular black.</li>
+        <li>A derived value picks the scrubbed bar's paragraph, or the last one at rest.</li>
+        <li>A <code>useThemeTint("foregroundSoft", "muted")</code> layer paint recolours it: a colour matrix reads each pixel's red channel as how far it is between black and white, and maps white to one token and black to the other. Two colours in one paragraph, switched on the UI thread.</li>
+        <li>The tint layer is clipped to the line; unclipped, a layer would be as big as the whole canvas.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-plancard">
+      <header><h4>PlanCard</h4><span class="path">src/PlanCard.tsx</span><span class="tags"><span class="tag t-ui">UI</span><span class="tag t-nat">Native</span></span></header>
+      <p>The glass card at the bottom. Always shows the active plan, starting with $500 per month. The plan ("$500 Every Month" or "$5,000"), with a recurring icon and "For 30 Years" or "One-off Added Today", and a secondary "Edit Simulation" button. Edit Simulation opens the Add Money tray. Reset restores the default plan and the info button.</p>
+      <ol class="steps">
+        <li>On launch it springs up 200 pt from under its spot, a touch past it (600 ms, damping ratio 0.7), fading in over 200 ms.</li>
+        <li>The glass is a flat fill, a 1 pt rim and a 12 pt inset glow, radius 23, 68.8 pt tall, in a <code>DamageBoundary</code> with a 24 pt outset.</li>
+        <li>The finger lights and stretches it through <code>useGlassTouchObserver</code>, which never takes the touch, so the button inside keeps its press.</li>
+        <li>The plan's title shrinks to fit one line (<code>fit</code>), so a large amount or a longer language doesn't wrap.</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- ───────── Chart ───────── -->
+  <div class="comp-group">
+    <h3>Chart</h3>
+    <p class="sub">A root that owns data, zoom and scrub, and layers that only project it. Section 07 has the overview.</p>
+
+    <div class="glass comp" id="c-barchart">
+      <header><h4>BarChart</h4><span class="path">src/chart/BarChart.tsx · BarChartContext.tsx · SavingsChart.tsx</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-ui">UI</span><span class="tag t-skia">Skia</span></span></header>
+      <p>One Skia canvas and the shared values its layers read. <code>SavingsChart</code> is just a <code>BarChart</code> with Aave's layers listed bottom to top.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li><b>The frame.</b> A derived <code>ChartFrame</code> holds everything a bar's geometry needs this frame: visible months (from a log-scale zoom value), plot size, the blended balance and deposit series, the wave, how far bars may reach into the margin, and the pixel ratio. <code>drawnBars</code> works out every slot's geometry once per frame for all layers, so a scrub frame, where the frame holds still, only looks bars up.</li>
+        <li><b>A new plan</b> grows in as a wave over 700 ms. If the plan was just simulated, 8 haptic ticks run along it, the last one medium. <b>The same plan at a new rate</b> only moves its bars: start and target series blend on a spring from wherever they are mid-move.</li>
+        <li><b>A range switch is a zoom.</b> A reaction on <code>zoomMonths</code> springs the log of visible months to the target (520 ms, critically damped), from wherever it is, so an interrupted split or merge turns around in place. It also clears the scrub. Year 1 splits into months between 1Y and 10Y on the same clock.</li>
+        <li><b>Scrub haptics:</b> a selection tick per bar, medium on the last bar or where earnings first pass deposits (the crossover).</li>
+        <li><b>Layout without a second render.</b> The width is known in render (screen less insets). The height is read in a layout effect with <code>getBoundingClientRect</code>, since Fabric has already laid the chart out by then, and written to shared values, so the plot draws in the commit that mounts it. <code>onLayout</code> follows later resizes.</li>
+        <li><b>Canvas.</b> The canvas reaches past the plot to the screen's edges (<code>bleed</code>), so bars can slide off screen mid-zoom. The plot origin is snapped to a whole pixel. The context is provided twice, outside and inside the canvas, because Skia's reconciler doesn't see context from outside it.</li>
+        <li><b>Gestures last.</b> <code>ChartGestures</code> mounts the frame after the first paint, and only if a child layer declares <code>chartLayer = { scrub: true }</code> (read off the element types by <code>hasScrubLayer</code>, no render needed). Until then an empty view carries the chart's accessibility label.</li>
+      </ol>
+      <h5>Context a layer gets</h5>
+      <table>
+        <tr><td>frame · bars</td><td>the frame and every drawn slot's geometry this frame</td></tr>
+        <tr><td>plotWidth · plotHeight · canvasHeight · width · bleed</td><td>sizes, as shared values for worklets and a JS width for paragraphs</td></tr>
+        <tr><td>plotScreenY</td><td>the plot's top on screen, to line Skia up with the native page behind it</td></tr>
+        <tr><td>selectedIndex · shownIndex · dimProgress</td><td>the bar under the finger; the bar kept after lifting so the tooltip fades in place; 0 → 1 as a scrub starts</td></tr>
+        <tr><td>projection · rangeId · endMonths · grid</td><td>the data, the range's bar end months, and the grid's labels and dash start</td></tr>
+      </table>
+    </div>
+
+    <div class="glass comp" id="c-layers">
+      <header><h4>The layers</h4><span class="path">src/chart/layers/</span><span class="tags"><span class="tag t-ui">UI</span><span class="tag t-skia">Skia</span></span></header>
+      <p>Each layer is a component that reads the context and draws. Most record a picture per frame with a reused recorder and paints, because Graphite draws rounded rects and circles analytically on the GPU, where an anti-aliased path is rasterized on the CPU (the Skia patch turns MSAA off).</p>
+      <table>
+        <tr><th>Layer</th><th>What it draws and how</th></tr>
+        <tr><td>GridLabels</td><td>Compact dollar labels at 2/6 to 6/6 of the balance at the visible months, so the scale moves smoothly with the zoom. Formatted and measured once per frame in <code>useGridLayout</code>, shared with GridLines. A label fades out over 6 pt as the tallest bar under its column reaches it, instead of hiding behind it.</td></tr>
+        <tr><td>Bars</td><td>One picture: each bar's deposited and earned segments as rounded rects, rounded on top only, 2 pt apart, filled with plot-tall gradients. Earnings show at least 4 pt tall. While scrubbing, others dim through the paint's alpha (deposited to 0.15, earned to 0.4): a picture takes no group opacity, and a layer would be the canvas's size.</td></tr>
+        <tr><td>Dots</td><td>A circle under each bar, dimming to 0.25 while scrubbing. Year 1's dots fan out with its months.</td></tr>
+        <tr><td>Selection ★</td><td>The scrubbed bar again at full strength, with the earned part in a brighter gradient, over the dimmed rest. Built as three paths fanned out to Skia props through <code>useDerivedField</code>.</td></tr>
+        <tr><td>EdgeFade</td><td>Mid-zoom, bars run past the plot. One rect paints the page gradient over the right margin, clear at the plot and opaque at the edge, narrowing as the zoom lands. Invisible at rest, so a theme switch can't show a strip of the old page for a frame. Masking the bars instead had pushed scrub p50 from 5 to 14 ms on the Redmi.</td></tr>
+        <tr><td>GridLines</td><td>Dashed lines over the bars, each dash a round-capped rounded rect (4.9 on, 3.6 off), stroke and position on whole pixels so every line is equally heavy. A dashed path would be re-dashed and rasterized on the CPU every redraw.</td></tr>
+        <tr><td>Axis</td><td>See ChartAxis below.</td></tr>
+        <tr><td>Tooltip ★</td><td>Formats the deposited and earned texts for every bar on JS once per plan and range, then hands <code>ScrubTooltip</code> the shown bar. It may reach past the plot to 8 pt from the screen's edge.</td></tr>
+      </table>
+      <p>★ scrub layers. Listing either one turns the scrub gesture on.</p>
+    </div>
+
+    <div class="glass comp" id="c-gestures">
+      <header><h4>ChartGestures</h4><span class="path">src/chart/ChartGestures.tsx</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>The scrub, on an empty hit view beside the canvas, so its renders never redraw the chart.</p>
+      <ol class="steps">
+        <li>A pan from touch-down (<code>minDistance: 0</code>). Each event maps <code>x</code> to a bar with <code>barIndexAtX</code> and writes <code>selectedIndex</code> and <code>shownIndex</code>.</li>
+        <li><code>dimProgress</code> rises in 160 ms as the finger lands and falls in 220 ms after it lifts. <code>selectedIndex</code> goes back to −1 at once; <code>shownIndex</code> stays, so the tooltip fades out where it was.</li>
+        <li>For screen readers the view is <code>adjustable</code>: swipe up and down steps through bars, and its value reads the bar's date, total, deposits and earnings.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-tooltip">
+      <header><h4>ScrubTooltip</h4><span class="path">src/chart/ScrubTooltip.tsx · tooltipBubble.ts</span><span class="tags"><span class="tag t-ui">UI</span><span class="tag t-skia">Skia</span></span></header>
+      <p>The pill over the scrubbed bar: a "$" disc with "Deposited" and its amount, a sparkle with "Earned" and its amount. Drawn inside the chart's canvas, so the pill, its arrow and its text move in the same frame as the bar.</p>
+      <ol class="steps">
+        <li><b>Placement</b> (<code>placeTooltip</code>): above the bar while it fits, otherwise hanging below the bar's top. Sideways it stays between the limits and the arrow keeps pointing at the bar.</li>
+        <li><b>Outline</b> (<code>buildBubblePath</code>): box and arrow are one contour, so one fill and one stroke cover it. When the arrow reaches a corner, the corner gives way and the arrow runs straight down the side. It's rebuilt only when the width, the arrow's position or its direction changes, into a volatile path builder.</li>
+        <li><b>Width</b>: the values are measured with every digit as a zero, so the pill doesn't twitch as digits change under the finger.</li>
+        <li><b>Text</b>: the labels are paragraphs built once; the values are shaped on the UI thread only when the bar changes, so a new plan or range builds nothing until someone scrubs. Paragraphs ignore group opacity, so the fade goes into the alpha of each row's tint paint.</li>
+        <li><b>Entrance</b>: as a scrub starts, the pill grows from 0.6× out of its arrow's tip (320 ms, damping ratio 0.72). Moving between bars and fading out leave it at full size.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-axis">
+      <header><h4>ChartAxis</h4><span class="path">src/chart/ChartAxis.tsx</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-skia">Skia</span></span></header>
+      <p>The row under the plot. At rest: the range's first and last durations at the ends and "Future Projection" in the middle, in a gradient across its own width. While scrubbing: the scrubbed bar's date (month and year for 6M and 1Y, year beyond).</p>
+      <ol class="steps">
+        <li>It's a layer of the chart's own canvas, translated to the 25 pt the screen leaves under the chart, so it needs no canvas of its own.</li>
+        <li>All labels are paragraphs built in white on JS once per range. Each date is centred under its bar until it would cross the plot's edge, where it stops.</li>
+        <li>A Paragraph ignores its Group's opacity, so derived values swap each one for <code>null</code> instead of fading it.</li>
+        <li>The ends and the date are tinted through layer paints; "Future Projection" is an alpha mask over a gradient rect. The row is clipped so those layers stay row-sized.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-chartskeleton">
+      <header><h4>ChartSkeleton</h4><span class="path">src/chart/ChartSkeleton.tsx</span><span class="tags"><span class="tag t-js">JS</span></span></header>
+      <p>Grey bars in the chart's place while the rate loads: one per bar of the range, on a gentle compounding curve, with the real bars' gap ratio and top corners and the same plot padding. Plain views, not Skia; the real bars grow in with their wave once the rate lands.</p>
+    </div>
+  </div>
+
+  <!-- ───────── Trays ───────── -->
+  <div class="comp-group">
+    <h3>Trays</h3>
+    <p class="sub">Native bottom sheets from TrueSheet, wrapped once in <code>Tray</code>.</p>
+
+    <div class="glass comp" id="c-tray">
+      <header><h4>Tray</h4><span class="path">src/ui/Tray.tsx</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-nat">Native</span></span></header>
+      <p>The shell every tray uses: an auto-height TrueSheet with Aave's padding, a header with a title and a divider (or just the close button), steps, and a way to keep content warm. Open and close by name: <code>openTray("add-money")</code>, <code>closeTray(name)</code>.</p>
+      <h5>How it works</h5>
+      <ol class="steps">
+        <li><b>Sheet.</b> TrueSheet with one <code>"auto"</code> detent, no grabber, no elevation. iOS dims the page to half black (<code>dimColor</code>); Android, whose dim colour paints opaque, gets a 44 pt corner radius instead. The sheet's own colours can't take a shared value, so the shell reads React's theme. A tray can't be open while the toggle is pressed, so that's enough.</li>
+        <li><b>Insets.</b> 28 pt in from the sides and top. At the bottom, iOS floats the sheet off the screen's edge, so content may reach into the home-indicator inset; Android's may not.</li>
+        <li><b>Steps.</b> <code>page</code> names the step on show. A new one is keyed, so it fades in while growing from 0.9× (260 ms, strong ease-out) and the old one fades out in 180 ms, while the sheet resizes natively. The first mount skips the animation. With <code>onBack</code>, the round button becomes a back chevron and the title centres.</li>
+        <li><b>Warm.</b> TrueSheet mounts content on present and unmounts it after dismiss. With <code>isKeptWarm</code>, the tray sets <code>keepMounted</code> 1.5 s after launch on an idle callback, clearing the bars' wave, so opening is only the native present. It costs its views for good and a re-render when its props change, so only Add Money does it.</li>
+        <li><b>Context for content.</b> <code>useIsTrayOpen()</code> turns false the moment the tray starts closing. <code>useSetTrayDraggable()</code> holds the sheet still; closing lets go again.</li>
+      </ol>
+      <p><code>TrayDoneButton</code> is a <code>PrimaryButton</code> that closes its tray.</p>
+    </div>
+
+    <div class="glass comp" id="c-addmoney">
+      <header><h4>AddMoneyTray</h4><span class="path">src/trays/AddMoneyTray.tsx</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-ui">UI</span></span></header>
+      <p>The main action: type an amount, pick one-off or recurring (and how often), and press Simulate.</p>
+      <ol class="steps">
+        <li>The form (<code>AddMoneyForm</code>) keeps one raw string per kind, so switching tabs keeps what was typed in each. The selected tab is the plan: a one-off deposit or a recurring one, never both. It's keyed by <code>resetCount</code>, so Reset starts it over.</li>
+        <li>Keys reach <code>onKey</code> through <code>scheduleOnRN</code> at touch-down, so two taps can arrive before a re-render. Each key builds on a ref holding the latest form, not on render state. That also gives all twelve keys the same handler across renders, so none re-renders.</li>
+        <li><code>applyKeyToForm</code> (pure, tested) returns the next form, the same form for a no-op, or <code>null</code> past the cap ($10M one-off, $100k recurring). A rejected key fires the error haptic and shakes the amount (8, −6.4, 4.8, −3.2, 0 pt, 50 ms each).</li>
+        <li>Tapping the selected recurring tab opens the <code>GlassMenu</code> above it, with the tab as its anchor and the tray held still.</li>
+        <li>Simulate is disabled until there's a deposit. Pressing it hands the draft plan to the screen and closes the tray.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-amount">
+      <header><h4>AmountDisplay</h4><span class="path">src/amount/AmountDisplay.tsx · SlideTransition.ts · CommaTransition.ts</span><span class="tags"><span class="tag t-js">JS</span><span class="tag t-ui">UI</span></span></header>
+      <p>The big amount in the Add Money tray, typed a character at a time. Unlike the hero it's ordinary views with Reanimated layout animations, since it changes only when a key is pressed.</p>
+      <ol class="steps">
+        <li><b>Identity.</b> Each character is keyed by which occurrence of itself it is (the second "5", the first ","). Typing or deleting at the end keeps every other character's key, so existing digits slide to their new slot and only the new one animates in.</li>
+        <li><b>Motion.</b> New digits slide up from below the baseline, removed ones slide back down; the placeholder "0" is the only character that comes through the top. Kept digits move sideways with <code>SlideTransition</code> (x only, 160 ms: a digit's box never changes size). A separator that jumps more than its width dips on the way with <code>CommaTransition</code>.</li>
+        <li><b>Jumps.</b> A change that isn't one keystroke (a tab switch, a reset) bumps a swap count: the old row shrinks away and the new one grows in, instead of sliding as if typed.</li>
+        <li><b>Fit.</b> <code>amountLayout()</code> works out the row from Regola Bold advances read from the font file. A row wider than the tray scales down from its left middle with a 100 ms CSS transition. Cents are 0.6× the size.</li>
+        <li><b>Clip.</b> The row sits in a clip with 0.4 em of room above and below, and a gradient in the tray's colour over the leading hides glyphs sliding through. That gradient is the one part that re-renders on a theme switch, since a gradient string can't take a shared value. It all sits in a <code>DamageBoundary</code>.</li>
+        <li>Layout animations are off with Reduce Motion, and on Android before 9, which can't run them cleanly.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-numpad">
+      <header><h4>Numpad</h4><span class="path">src/amount/Numpad.tsx · amountInput.ts</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <p>Four rows of keys: 1–9, the locale's decimal separator, 0 and backspace.</p>
+      <ol class="steps">
+        <li>A key registers at touch-down, like a phone keypad. The tap's <code>onBegin</code> springs the key in, fires a light haptic and sends the key to JS, all in the same frame.</li>
+        <li>There's no highlight: the key's label grows to 1.25× under the finger (stiffness 800, damping 60) and springs back on release.</li>
+        <li>Backspace runs a tap and a 450 ms long press together: holding it clears the amount with a rigid haptic.</li>
+        <li>Each key sits in its own <code>DamageBoundary</code>, so a press repaints the key, not the window. <code>amountInput.ts</code> holds the key rules: at most 8 whole digits and 2 decimals, one separator, a leading 0 replaced.</li>
+      </ol>
+    </div>
+
+    <div class="glass comp" id="c-ratetray">
+      <header><h4>InterestRateTray</h4><span class="path">src/trays/InfoTrays.tsx</span><span class="tags"><span class="tag t-js">JS</span></span></header>
+      <p>The rate being simulated, large, with a caption saying where it comes from. Under a full-width divider, two radio rows: the Aave average (disabled until it has loaded; "loading" or "unavailable" in place of the value) and the 6% base rate. When Aave is unavailable a note says the base rate is in use. Rows are <code>PressableOpacity</code> with the <code>radio</code> role, and the ring and dot colour themselves on the UI thread. Choosing saves to MMKV.</p>
+    </div>
+
+    <div class="glass comp" id="c-about">
+      <header><h4>AboutTray</h4><span class="path">src/trays/InfoTrays.tsx</span><span class="tags"><span class="tag t-js">JS</span></span></header>
+      <p>"How it works", opened from the "?" button. A home step with a two-tone book icon, a short explanation and three question links; each opens a step with an answer card.</p>
+      <ol class="steps">
+        <li>Steps use the <code>Tray</code>'s <code>page</code> and <code>onBack</code>, so each fades in over the last while the sheet resizes. Closing the tray resets it to the home step.</li>
+        <li>"How was my projection calculated?" holds the formula section: a segmented Formula / Value switch, the formula <code>A = P(1 + r/n)^nt</code> laid out in views (fraction bar, smaller raised exponent), and rows for P, R, N and T. On the Value tab the variables turn blue and each row shows this plan's number: the deposit, the APY, the seconds in a year (compounding is per second), the range. The total A is the hero's balance.</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- ───────── Theme hooks ───────── -->
+  <div class="comp-group">
+    <h3>Theme hooks</h3>
+    <p class="sub">How a component takes a theme colour without rendering on a switch. All in <code>src/theme.tsx</code>.</p>
+    <div class="glass comp" id="c-themehooks">
+      <header><h4>Picking the right hook</h4><span class="path">src/theme.tsx</span><span class="tags"><span class="tag t-ui">UI</span></span></header>
+      <table>
+        <tr><th>Hook</th><th>Returns</th><th>Use it for</th></tr>
+        <tr><td>useThemedStyle(build)</td><td>an animated style; both themes built up front, picked on <code>viewThemeModeValue</code></td><td>view fills and borders. <code>build</code> must be stable; the React Compiler keeps an inline one stable.</td></tr>
+        <tr><td>useViewColor(token)</td><td>a derived colour on the view clock</td><td>animated props on native views (Text)</td></tr>
+        <tr><td>useThemeColor(token)</td><td>a derived colour on the Skia clock</td><td>Skia paints</td></tr>
+        <tr><td>useThemeGradient(token)</td><td>derived gradient colours on the Skia clock</td><td>Skia gradients (bars, hero, tooltip)</td></tr>
+        <tr><td>useThemeTint(onWhite, onBlack)</td><td>a layer paint whose colour matrix maps white and black to two tokens</td><td>Skia paragraphs, which bake their colours in: build once in white and black, tint per theme</td></tr>
+        <tr><td>byMode(build)</td><td><code>{ dark, light }</code> built once</td><td>module constants: glass looks, icon colours</td></tr>
+        <tr><td>useTheme() · useThemeMode()</td><td>React state, a transition behind the screen</td><td>only what can't take a shared value: the sheet's colours, the bars' icon style, AmountDisplay's edge gradient</td></tr>
+      </table>
+      <p>The view clock and the Skia clock are two shared values. On iOS they flip together. On Android the views flip 3 frames after Skia, because Skia's TextureView presents 3–4 frames behind the views around it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 13 -->
+<section id="native">
+  <h2><span class="n">13</span>Native layer</h2>
+  <h3>Config plugins (<code>plugins/</code>)</h3>
+  <table class="glass tablewrap">
+    <tr><th>Plugin</th><th>Why</th></tr>
+    <tr><td>withEarlyReactStart</td><td>Starts loading the bundle from <code>Application.onCreate</code>, overlapping activity creation</td></tr>
+    <tr><td>withNativeLibraryPreload</td><td>Loads the .so files on idle cores (worklets alone take about 11 ms on the JS thread)</td></tr>
+    <tr><td>withHermesOldGenBeforeTti</td><td>No young-generation collections during startup; <code>ttiReached()</code> ends it</td></tr>
+    <tr><td>withBaselineProfile</td><td>AOT-compiles the cold-start path on first launch</td></tr>
+    <tr><td>withoutEmojiCompatInitializer</td><td>Skips the emoji font load at launch (about 6 ms on the main thread)</td></tr>
+    <tr><td>withPerfProfileable</td><td><code>PERF_PROFILEABLE=1</code> builds that simpleperf can attach to</td></tr>
+    <tr><td>withSystemNightMode · withWindowBackground</td><td>The window, splash and bars in the app's own scheme from the first frame</td></tr>
+    <tr><td>withTransparentNavigationBar</td><td>Removes the contrast scrim behind the three-button bar</td></tr>
+  </table>
+  <h3 id="patches">Patches (<code>patches/</code>)</h3>
+  <p>13 dependency patches, applied by bun on install. They carry most of the maintenance cost, since each has to be redone on every upgrade, so each keeps its reason in comments next to the change. Comments tagged <code>PATCH(aave-test)</code> were written for this app; most of the others came over from earlier work on another app (one Reanimated hunk is still tagged <code>PATCH(dreamcash)</code>). The numbers below come from those comments and the performance history.</p>
+
+  <table class="glass tablewrap patches">
+    <tr><th>Patch</th><th>Size</th><th>What it changes and why</th></tr>
+
+    <tr><td colspan="3" style="color:var(--lavender);font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:600">Runtime and rendering</td></tr>
+    <tr><td>react-native 0.88.0</td><td>~1.3k lines</td><td>
+      <b>Why RN builds from source:</b> several hunks are native.
+      <ul>
+        <li><b>Context propagation</b> (the Fabric renderer, dev, prod and profiling builds): when a context changes, React walks down to find what reads it. A nested provider of the same context now stops that walk for that context, since nothing under it can see the outer value.</li>
+        <li><b>Mounting differ</b>: children that are the same shadow node in the old and new tree are left out before diffing, since they can't produce mutations (the change proposed upstream in facebook/react-native#59242, always on here; off on Android while its mounting layer isn't ready).</li>
+        <li><b>iOS views</b>: <code>RCTViewComponentView</code> stops re-drawing its layer when only its position or opacity changed. The layer only needs the opacity for <code>filter</code>, and a move only matters for the pointer hover shape.</li>
+        <li><b>Feature flags</b>, both platforms: static view configs instead of asking native (the native lookup cost about 1 s on the first launch after an install or update). <code>preventShadowTreeCommitExhaustion</code>, which Reanimated's no-commit-pausing mode relies on. Shadow tree revisions destroyed off the JS thread. On Android, prepared text layout and text measurement optimisations (a paragraph is measured once and the view paints that layout).</li>
+        <li><b>Hermes</b>: the startup heap starts at 64 MB instead of 32, so the old generation, sized for live data at 50% occupancy, stops collecting about ten times while startup grows it.</li>
+        <li><b>Android back</b>: the back callback is registered on every API level. An app that opts into predictive back on Android 13–15 never gets <code>onBackPressed</code>, so without it every press sent the app to the background.</li>
+      </ul></td></tr>
+    <tr><td>react-native-reanimated 4.7.1</td><td>360 lines</td><td>
+      <ul>
+        <li><b>Theme switch without commits</b> (Android): a numeric <code>color</code> on a PlainText label now goes down Reanimated's synchronous path, set on the native view directly, instead of a shadow tree commit (clone, layout, mount). A theme switch recolours every label at once, so this is most of its cost. RN <code>&lt;Text&gt;</code> can't do this: its colour lives in the shadow tree's attributed string. The C++ serializer and the Kotlin parser learn the new prop.</li>
+        <li><b>Null props</b>: a prop reset to <code>null</code> goes through a commit, because the synchronous buffers read numbers and threw on it.</li>
+        <li><b>Bad writes</b>: a shared value write that isn't an animation throws on the UI runtime, which is fatal in release. Release now drops it and reports; dev still throws.</li>
+        <li><b>Layout animations</b> end one frame later, so one that settles between two of the legacy proxy's transaction pulls doesn't lose its last frame (unless a new animation has taken the view by then).</li>
+      </ul></td></tr>
+    <tr><td>react-native-skia 3.8.1</td><td>390 lines</td><td>
+      <ul>
+        <li><b>Pipeline cache on disk</b>: Dawn's blob cache saved through its device callbacks, written off the calling thread and fsynced before the rename. Without it every launch recompiled every GPU pipeline: about 2.8 s of CPU on the Redmi. Entries are keyed by adapter, driver and Dawn version and hold their full key, so a stale entry is a miss, never a wrong shader. On Android it lives in <code>no_backup</code>, which storage pressure never empties (a miss costs the Redmi about 1.5 s).</li>
+        <li><b>GPU memory</b>: Graphite's budget of unused resources is lowered. Every render thread keeps a recorder with its own budget, so it counts once per thread: at 64 MB each, two canvases held about 340 MB on the Redmi.</li>
+        <li><b>MSAA off</b>: with multisampling, every render pass after a frame's first reloaded the whole canvas (about 570 ms of main-thread presents in one profile). This is why the chart draws rounded rects and circles, which Graphite draws analytically, instead of paths, which it rasterizes on the CPU.</li>
+        <li><b>Surface capabilities</b> asked once per process: every window reports the same, and asking cost about 16 ms of main thread per canvas attach on the Redmi.</li>
+        <li><b>A crash</b>: a JSI call with no arguments let the compiler hoist a read of the null argument list above the count check (SIGSEGV).</li>
+      </ul></td></tr>
+    <tr><td>react-native-worklets 0.13.0</td><td>35 lines</td><td>The TurboModule spec is required inside the "React Native runtime" branch instead of imported at the top. With Expo's tree shaking, a module with side effects is never inlined, so the import evaluated the spec (and <code>NativeModules</code>) on the UI runtime in Bundle Mode.</td></tr>
+    <tr><td>react-native-gesture-handler 3.4.0</td><td>62 lines</td><td>
+      <ul>
+        <li><b>Android</b>: a gesture that activates on touch-up (a tap) no longer sends a cancel to the JS responder. RN's root has already ended that touch, so the cancel landed on nothing.</li>
+        <li><b>iOS</b>: <code>RNGestureHandlerButton</code> mounts children by sibling, not by index. Its underlay layer sits at index 0, so a child mounted after the first layout landed one slot too low, under the sibling it should cover.</li>
+      </ul></td></tr>
+
+    <tr><td colspan="3" style="color:var(--lavender);font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:600">Components</td></tr>
+    <tr><td>@lodev09/react-native-true-sheet 3.10.1</td><td>~3k lines</td><td>
+      The biggest patch. This app relies on these parts:
+      <ul>
+        <li><b><code>keepMounted</code></b> (this app's): renders the content before the first present and keeps it after a dismiss, so presenting is only the native animation. It's derived in the render that turns it on, so it costs one commit rather than a second one after it. The Add Money tray uses it.</li>
+        <li><b>No visible grow on open</b>: a present waits until the auto detent has a measured height, since a first present shares its commit with the mount and would otherwise open at the header's height and grow a beat later. A 500 ms escape presents anyway. On iOS the content is seeded with the window's width before the first layout for the same reason.</li>
+        <li><b>Present and dismiss races</b>: a dismiss issued mid-present waits for the present to finish (UIKit drops it), a present issued mid-dismiss waits for the dismiss, a present on a controller mid-transition waits it out, and a superseded present resolves instead of leaving JS waiting forever.</li>
+        <li><b>View recycling</b>: a pooled sheet view no longer hands its measured heights and presentation state to the next sheet that mounts.</li>
+        <li><b>Touches</b> (Android): a closed sheet's screen-sized host no longer takes the touches of whatever it covers.</li>
+      </ul>
+      The rest serves features this app doesn't use yet: a colour-animated dim that matches the sheet, a 1 pt outline, a faster detent morph (<code>resizeSpeed</code>), capped detents, footer-pinned "tray" content and per-frame morph events.</td></tr>
+    <tr><td>react-native-plain-text 0.9.3</td><td>~1.6k lines</td><td>
+      Android only, all about measuring labels faster:
+      <ul>
+        <li><b>A single-line fast path</b>: text that fits one line skips <code>TextView.measure</code> and the <code>StaticLayout</code> it builds. Its width comes from the shaped text and its height from the line height.</li>
+        <li><b>A measure cache saved across launches</b>, so a cold start skips measuring labels it measured last time. A content provider starts loading the file before <code>Application.onCreate</code>, and a measure never waits for it. The file is thrown out whole if anything that could change a size differs: app build, OS build, fonts, density, font scale, Bold Text or locales. Only bundled fonts and code points below U+2000 are saved, since emoji and CJK fonts update outside the app.</li>
+        <li><b>Correctness</b>: a size measured with a fallback font (before a runtime font registers) isn't cached, a Bold Text or locale change clears the cache, and the answer is clamped to Yoga's bounds. The Kotlin measure answers in whole pixels, so a 220.691 pt width came back as 220.364 and Fabric logged "invalid measurement" on every miss.</li>
+      </ul></td></tr>
+    <tr><td>react-native-nano-icons 1.0.0</td><td>40 lines</td><td>
+      <ul>
+        <li>The native view is assumed present instead of asked for. It's codegen'd and always linked, and asking cost about 12 ms of JS at startup.</li>
+        <li>Android: a one-layer icon reports no overlapping rendering, so fading it doesn't allocate an offscreen layer every frame. Two-tone icons keep the layer so their layers don't show through each other.</li>
+      </ul></td></tr>
+
+    <tr><td colspan="3" style="color:var(--lavender);font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:600">Expo startup</td></tr>
+    <tr><td>expo-modules-core 58.0.23</td><td>690 lines</td><td><b>Lazy native modules</b>, both platforms. Most modules' <code>definition()</code> is now built on first use, on one background thread, instead of while the registry is built on the startup path. The first screen doesn't touch them. A module's <code>OnCreate</code> runs once its definition is ready, events queued before then are delivered after it, a JS call meanwhile waits for the build in progress, and view modules are still built before Fabric exports them. Keep rules make sure R8 doesn't rename the modules found by name, and the permissions service takes a lock because registration now runs on two threads.</td></tr>
+    <tr><td>expo 58.0.16</td><td>185 lines</td><td><b>iOS module registry in the background</b>: the registry is built on a background thread from <code>willFinishLaunching</code>, overlapping UIKit connecting the scene and React Native creating its host, instead of on the JS thread between runtime creation and bundle load. The factory adopts the prepared registry once it's ready. Release builds only, since the dev launcher starts its own host first.</td></tr>
+
+    <tr><td colspan="3" style="color:var(--lavender);font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:600">Bundler</td></tr>
+    <tr><td>@expo/metro-config 58.0.15</td><td>57 lines</td><td>With tree shaking, Expo kept every require eager whose module had a side effect anywhere below it, which is nearly every require in an app. It now uses Metro's own short list (React, the JSX runtimes, the compiler runtime, react-native), as in dev, so inline requires defer work at startup again.</td></tr>
+    <tr><td>metro 0.87 · metro-runtime 0.87</td><td>46 lines</td><td>Worklets Bundle Mode setup. Metro hashes the generated files in <code>react-native-worklets/.worklets</code> fresh every time so they're never served stale, and hot reload also sends each updated module to the worklet runtimes.</td></tr>
+  </table>
+  <h3>Building on devices</h3>
+<pre><span class="c"># iOS: generic device build, then install over Wi‑Fi</span>
+xcodebuild -workspace ios/AaveSavings.xcworkspace -scheme AaveSavings -configuration Release \
+  -destination generic/platform=iOS -derivedDataPath ios/build/device DEVELOPMENT_TEAM=NK2KJG8546 \
+  -allowProvisioningUpdates build
+xcrun devicectl device install app --device &lt;id&gt; ios/build/device/Build/Products/Release-iphoneos/AaveSavings.app
+
+<span class="c"># Android</span>
+(cd android &amp;&amp; ./gradlew assembleRelease) &amp;&amp; adb install -r android/app/build/outputs/apk/release/app-release.apk</pre>
+</section>
+
+<!-- 14 -->
+<section id="tests">
+  <h2><span class="n">14</span>Tests &amp; tooling</h2>
+  <p>Tests cover only pure logic, with <code>bun test src</code>: <code>projection</code>, <code>format</code>, <code>i18n</code>, <code>heroLayout</code>, <code>amountInput</code>, <code>aaveRate</code>, chart <code>bars</code>, <code>geometry</code> and <code>tooltipBubble</code>, glass <code>stops</code> and <code>lensConstants</code> (the Swift and AGSL lens numbers agree), <code>pixels</code> and <code>savedSimulation</code>. UI and motion are checked on real devices (the iPhone and the Redmi). <code>bun run typecheck</code> runs tsc, and <code>bun run lint</code> runs Biome.</p>
+  <p>Two project skills carry the design and performance knowledge: <code>.claude/skills/visual-craft</code> (visual language and its decision log) and <code>.claude/skills/performance</code> (how things are measured, <code>history.md</code>, and debug files kept in <code>/tmp/aave-debug</code>).</p>
+</section>
+
+<!-- 15 -->
+<section id="index">
+  <h2><span class="n">15</span>File index</h2>
+  <table class="glass tablewrap">
+    <tr><th>Folder</th><th>What's in it</th></tr>
+    <tr><td><code>src/</code></td><td>App, SavingsScreen, HeroAmount, heroLayout, EarnedLine, PlanCard, plan, savedSimulation, projection, format, haptics, storage, theme</td></tr>
+    <tr><td><code>src/chart/</code></td><td>BarChart, BarChartContext, SavingsChart, ChartGestures, ChartAxis, ChartSkeleton, ScrubTooltip, geometry, bars, plot, tooltipBubble, sparkle, chartLayers, useDerivedField</td></tr>
+    <tr><td><code>src/chart/layers/</code></td><td>Bars, Dots, Grid (lines + labels), EdgeFade, Selection, Tooltip</td></tr>
+    <tr><td><code>src/amount/</code></td><td>AmountDisplay, Numpad, amountInput, SlideTransition, CommaTransition, regolaMetrics</td></tr>
+    <tr><td><code>src/trays/</code></td><td>AddMoneyTray, InfoTrays (InterestRateTray, AboutTray)</td></tr>
+    <tr><td><code>src/ui/</code></td><td>controls, GlassMenu, SlidingTabs, Tray, Text, Icon, icons (ThemeModeIcon), Pressable, usePressGesture, Skeleton, pixels</td></tr>
+    <tr><td><code>src/ui/damage/</code></td><td>DamageBoundary and its Android inline module</td></tr>
+    <tr><td><code>src/ui/glass/</code></td><td>GlassView, useGlassTouch (GlassTouchLight, observer), stops, AaveGlassModule/View (.swift, .kt), AaveGlassLens.swift</td></tr>
+    <tr><td><code>src/rate/</code> · <code>src/i18n/</code> · <code>src/skia/</code></td><td>Aave rate fetch; dictionaries and locale; Regola typefaces and paragraphs</td></tr>
+    <tr><td><code>src/systemNightMode/</code></td><td>The Android night-mode inline module</td></tr>
+  </table>
+  <footer>Written from the working tree on 29 Oct 2026, component reference added 30 Oct 2026, including uncommitted changes. Numbers quoted come from comments in the code and the performance history.</footer>
+</section>
+</main>
+</div>
+
+<script>
+  // hero slots
+        (() => {
+          const g = document.getElementById("slots");
+          const labels = ["$", ",", "d11","d10","d9","," ,"d8","d7","d6",",","d5","d4","d3",",","d2","d1","d0",".","c","c"];
+          const show = ["$", "", "", "", "", "", "", "", "", "", "", "", "1", ",", "4", "8", "1", ".", "9", "3"];
+          let x = 14;
+          labels.forEach((l, i) => {
+            const isSep = l === "," || l === ".";
+            const w = isSep ? 30 : 46;
+            const on = show[i] !== "";
+            const color = l === "$" ? "#b6a8ff" : isSep ? "#ffc978" : l === "c" ? "#7fb0ff" : "#6fe0c8";
+            g.insertAdjacentHTML("beforeend",
+              `<rect x="${x}" y="22" width="${w - 4}" height="56" rx="8" fill="${on ? color + "26" : "#ffffff08"}" stroke="${on ? color : "#ffffff22"}" stroke-dasharray="${on ? "" : "3 3"}"/>` +
+              `<text x="${x + (w - 4) / 2}" y="57" fill="${on ? "#fff" : "#555a78"}" font-size="${on ? 18 : 11}">${on ? show[i] : l}</text>`);
+            x += w;
+          });
+          g.insertAdjacentHTML("beforeend", `<text x="24" y="100" fill="#9a9eb5" font-size="12" font-family="system-ui">showing $1,481.93: dashed slots are hidden for this amount</text>`);
+        })();
+
+        // phone zones
+        const ZONES = {
+          top: ["Top bar", "<code>HelpResetButton</code> is a GlassButton whose Skia canvas morphs \"?\" into a \"Reset\" pill once a simulation is set up. <code>ThemeToggle</code> is a GlassButton with <code>ThemeModeIcon</code>; it flips the theme optimistically with <code>useOptimistic</code>."],
+          rate: ["Rate row", "A PressableOpacity that opens the InterestRateTray. It shows \"Aave Stablecoin Rate 3.69%\", or a skeleton while the rate loads, so the base rate is never labelled as Aave's."],
+          hero: ["ProjectionSummary", "<code>HeroAmount</code> (20 rolling slots) and <code>EarnedLine</code>. Both read <code>selectedIndex</code> on the UI thread, so scrubbing updates them with no render."],
+          chart: ["SavingsChart", "<code>BarChart</code> with layers: GridLabels, Bars, Dots, Selection, EdgeFade, GridLines, Axis, Tooltip. One Skia canvas; the scrub gesture lives beside it over an empty hit view. <code>ChartSkeleton</code> stands in while the rate loads."],
+          axis: ["ChartAxis", "A layer of the chart's own canvas, drawn in the room left under it. At rest: the range's ends and a gradient \"Future Projection\". While scrubbing: the scrubbed bar's date."],
+          pills: ["Range pills", "<code>SlidingTabs look=\"pills\"</code>. Changing range sets <code>rangeId</code>; the chart zooms with a spring that retargets mid-flight, and year 1 splits into months between 1Y and 10Y."],
+          card: ["PlanCard", "A glass card with the plan's title and a PrimaryButton that opens the AddMoneyTray. The finger lights and stretches it through <code>useGlassTouchObserver</code>, which never takes the button's touch."],
+          bg: ["PageGradient", "One <code>GlassView</code> with a vertical fill and both themes' stops, placed at fixed points from the top as on Aave's screen. A theme switch changes it natively, along with every other glass view."],
+        };
+        const info = document.getElementById("zoneInfo");
+        document.querySelectorAll(".zone").forEach((z) => {
+          const showZone = () => {
+            for (const o of document.querySelectorAll(".zone")) {
+              o.classList.toggle("on", o === z);
+            }
+            const [t, d] = ZONES[z.dataset.k];
+            info.innerHTML = `<h4>${t}</h4><p>${d}</p>`;
+          };
+          z.addEventListener("mouseenter", showZone);
+          z.addEventListener("click", showZone);
+        });
+
+        // tabs
+        for (const b of document.querySelectorAll(".tabs button")) {
+          b.addEventListener("click", () => {
+            for (const o of document.querySelectorAll(".tabs button")) {
+              o.classList.toggle("on", o === b);
+            }
+            for (const p of document.querySelectorAll(".tabpane")) {
+              p.classList.toggle("on", p.id === `tab-${b.dataset.tab}`);
+            }
+          });
+        }
+
+        // active nav
+        const links = [...document.querySelectorAll("#toc a")];
+        const io = new IntersectionObserver((entries) => {
+          entries.forEach((e) => {
+            if (!e.isIntersecting) return;
+            for (const l of links) {
+              l.classList.toggle("active", l.getAttribute("href") === `#${e.target.id}`);
+            }
+          });
+        }, { rootMargin: "-30% 0px -60% 0px" });
+        for (const s of document.querySelectorAll("section")) io.observe(s);
+</script>
+</body>
+</html>
